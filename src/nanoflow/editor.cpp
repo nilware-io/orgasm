@@ -16,6 +16,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 static constexpr float NODE_ROUNDING = 4.0f;
 static constexpr float PIN_RADIUS = 5.0f;
@@ -2157,6 +2160,14 @@ void FlowEditorWindow::run_program(bool release) {
     char exe_buf[MAX_PATH];
     GetModuleFileNameA(nullptr, exe_buf, MAX_PATH);
     exe_path = fs::path(exe_buf).parent_path();
+#elif defined(__APPLE__)
+    {
+        uint32_t size = 0;
+        _NSGetExecutablePath(nullptr, &size);
+        std::string buf(size, '\0');
+        _NSGetExecutablePath(buf.data(), &size);
+        exe_path = fs::canonical(buf).parent_path();
+    }
 #else
     exe_path = fs::canonical("/proc/self/exe").parent_path();
 #endif

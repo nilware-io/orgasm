@@ -28,21 +28,22 @@ struct SdlImGuiWindow {
             return false;
         }
 
-        // Query OS DPI scale
+        // Query OS DPI scale and tell the renderer to map points to pixels
         dpi_scale = SDL_GetWindowDisplayScale(window);
         if (dpi_scale < 1.0f) dpi_scale = 1.0f;
+        SDL_SetRenderScale(renderer, dpi_scale, dpi_scale);
 
         imgui_ctx = ImGui::CreateContext();
         ImGui::SetCurrentContext(imgui_ctx);
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-        // Load default font scaled by DPI
+        // Load font at high resolution for sharp rendering on HiDPI,
+        // then scale back so it occupies the right amount of space in points.
         ImFontConfig font_cfg;
         font_cfg.SizePixels = 17.0f * dpi_scale;
         io.Fonts->AddFontDefault(&font_cfg);
+        io.FontGlobalScale = 1.0f / dpi_scale;
         ImGui::StyleColorsDark();
-        // Scale ImGui style by DPI
-        ImGui::GetStyle().ScaleAllSizes(dpi_scale);
         ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
         ImGui_ImplSDLRenderer3_Init(renderer);
 

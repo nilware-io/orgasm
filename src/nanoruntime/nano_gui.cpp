@@ -59,14 +59,15 @@ void av_create_window(std::string title,
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
 
-    // High DPI scaling
+    // High DPI scaling: set render scale so the renderer maps points to pixels
     float dpi_scale = SDL_GetWindowDisplayScale(window);
-    if (dpi_scale <= 0.0f) dpi_scale = 1.0f;
+    if (dpi_scale < 1.0f) dpi_scale = 1.0f;
+    SDL_SetRenderScale(renderer, dpi_scale, dpi_scale);
     ImGuiIO& io = ImGui::GetIO();
     ImFontConfig font_cfg;
     font_cfg.SizePixels = 13.0f * dpi_scale;
     io.Fonts->AddFontDefault(&font_cfg);
-    ImGui::GetStyle().ScaleAllSizes(dpi_scale);
+    io.FontGlobalScale = 1.0f / dpi_scale;
 
     ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer3_Init(renderer);
