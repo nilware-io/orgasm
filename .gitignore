@@ -1,0 +1,7 @@
+/.claude
+/build
+/out
+/.vs
+.generated/
+output/
+imgui.ini

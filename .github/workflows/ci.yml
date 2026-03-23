@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libxtst-dev libwayland-dev libxkbcommon-dev libegl-dev libgles-dev
+
+      - name: Configure
+        run: cmake -B build -DNANOLANG_BUILD_EDITOR=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ./build/test_inference
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanolang-linux
+          path: |
+            build/nanoc
+            build/nanoflow
+
+  windows:
+    runs-on: windows-latest
+    env:
+      VCPKG_DEFAULT_TRIPLET: x64-windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup vcpkg
+        run: |
+          git clone --depth 1 --branch 2026.03.18 https://github.com/microsoft/vcpkg.git
+          ./vcpkg/bootstrap-vcpkg.bat
+
+      - name: Configure
+        run: cmake -B build -DNANOLANG_BUILD_EDITOR=ON -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+
+      - name: Build
+        run: cmake --build build --parallel --config Release
+
+      - name: Test
+        run: ./build/Release/test_inference.exe
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanolang-windows
+          path: |
+            build/Release/nanoc.exe
+            build/Release/nanoflow.exe
+            build/Release/SDL3.dll
