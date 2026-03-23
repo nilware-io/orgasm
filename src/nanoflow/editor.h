@@ -167,7 +167,7 @@ private:
 #else
     pid_t child_pid_ = 0;
 #endif
-    void run_program();
+    void run_program(bool release = false);
     void stop_program();
     void poll_child_process();
     void draw_toolbar();

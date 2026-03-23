@@ -2068,7 +2068,11 @@ void FlowEditorWindow::draw_toolbar() {
 
     if (!can_run) ImGui::BeginDisabled();
     if (ImGui::Button("Run")) {
-        run_program();
+        run_program(false);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Run Release")) {
+        run_program(true);
     }
     if (!can_run) ImGui::EndDisabled();
 
@@ -2118,7 +2122,7 @@ void FlowEditorWindow::draw_toolbar() {
     }
 }
 
-void FlowEditorWindow::run_program() {
+void FlowEditorWindow::run_program(bool release) {
     // Stop existing
     stop_program();
 
@@ -2186,7 +2190,7 @@ void FlowEditorWindow::run_program() {
         build_log_.clear();
     }
 
-    build_thread_ = std::thread([this, nanoc_str, nano_str, out_str, tc_str, sn]() {
+    build_thread_ = std::thread([this, nanoc_str, nano_str, out_str, tc_str, sn, release]() {
         namespace fs = std::filesystem;
         fs::create_directories(out_str);
 
@@ -2251,7 +2255,8 @@ void FlowEditorWindow::run_program() {
             std::lock_guard<std::mutex> lock(build_log_mutex_);
             build_log_ += "\n=== CMake Build ===\n";
         }
-        std::string cmd3 = "cmake --build \"" + build_dir + "\" --config Debug --parallel";
+        std::string config = release ? "Release" : "Debug";
+        std::string cmd3 = "cmake --build \"" + build_dir + "\" --config " + config + " --parallel";
         if (run_cmd(cmd3) != 0) {
             build_state_ = BuildState::BuildFailed;
             return;
@@ -2259,7 +2264,7 @@ void FlowEditorWindow::run_program() {
 
         // Step 4: launch exe
 #ifdef _WIN32
-        fs::path exe_path = fs::path(build_dir) / "Debug" / (sn + ".exe");
+        fs::path exe_path = fs::path(build_dir) / config / (sn + ".exe");
         if (!fs::exists(exe_path))
             exe_path = fs::path(build_dir) / (sn + ".exe");
 #else
