@@ -348,6 +348,18 @@ std::string CodeGenerator::expr_to_cpp(const ExprPtr& e, FlowNode* ctx_node) {
                 return "(~" + expr_to_cpp(e->children[1], ctx_node) + ")";
             case BuiltinFunc::Mod:
                 return "(" + expr_to_cpp(e->children[1], ctx_node) + " % " + expr_to_cpp(e->children[2], ctx_node) + ")";
+            case BuiltinFunc::Rand: {
+                auto a = expr_to_cpp(e->children[1], ctx_node);
+                auto b = expr_to_cpp(e->children[2], ctx_node);
+                // Determine if float or int based on resolved type
+                bool is_float = e->resolved_type && e->resolved_type->kind == TypeKind::Scalar &&
+                    (e->resolved_type->scalar == ScalarType::F32 || e->resolved_type->scalar == ScalarType::F64);
+                if (is_float) {
+                    return "nano_rand_float(" + a + ", " + b + ")";
+                } else {
+                    return "nano_rand_int(" + a + ", " + b + ")";
+                }
+            }
             default: throw std::runtime_error("codegen: unknown builtin function"); break;
             }
         } else {
@@ -1285,6 +1297,12 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
         // No-op, returns void
         for (auto& o : node.outputs)
             pin_to_value[o.id] = "void()";
+
+        // Follow post_bang chain (e.g. when void is used as a lambda root for lock!)
+        auto bang_targets = follow_bang_from(node.bang_pin.id);
+        for (auto* bt : bang_targets)
+            emit_node(*bt, out, indent);
+
         return "void()";
     }
 

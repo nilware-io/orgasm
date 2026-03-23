@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <mutex>
+#include <random>
 
 // Scalar type aliases
 using u8  = uint8_t;
@@ -45,6 +46,22 @@ inline f32 nano_consume_mix() {
     f32 v = _nano_mix_accum;
     _nano_mix_accum = 0.0f;
     return v;
+}
+
+// Random number generation
+inline std::mt19937& nano_rng() {
+    static std::mt19937 gen(std::random_device{}());
+    return gen;
+}
+
+inline f32 nano_rand_float(f32 min, f32 max) {
+    std::uniform_real_distribution<f32> dist(min, max);
+    return dist(nano_rng());
+}
+
+inline s32 nano_rand_int(s32 min, s32 max) {
+    std::uniform_int_distribution<s32> dist(min, max);
+    return dist(nano_rng());
 }
 
 // Standard event handler declarations — implemented by generated code

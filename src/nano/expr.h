@@ -37,7 +37,7 @@ enum class BinOp { Add, Sub, Mul, Div, Eq, Ne, Lt, Gt, Le, Ge, Spaceship };
 enum class BuiltinFunc {
     None,  // not a builtin (lambda call)
     Sin, Cos, Pow, Exp, Log,
-    Or, Xor, And, Not, Mod,
+    Or, Xor, And, Not, Mod, Rand,
 };
 
 struct PinRefInfo {

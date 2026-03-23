@@ -63,6 +63,14 @@ bool imgui_slider_int(std::string label, s32& value, s32 min, s32 max) {
     return ImGui::SliderInt(label.c_str(), &value, min, max);
 }
 
+bool imgui_vslider_float(std::string label, f32 width, f32 height, f32& value, f32 min, f32 max) {
+    return ImGui::VSliderFloat(label.c_str(), ImVec2(width, height), &value, min, max);
+}
+
+bool imgui_vslider_int(std::string label, f32 width, f32 height, s32& value, s32 min, s32 max) {
+    return ImGui::VSliderInt(label.c_str(), ImVec2(width, height), &value, min, max);
+}
+
 bool imgui_input_float(std::string label, f32& value) {
     return ImGui::InputFloat(label.c_str(), &value);
 }
@@ -74,6 +82,10 @@ bool imgui_input_int(std::string label, s32& value) {
 // Layout
 void imgui_same_line() {
     ImGui::SameLine();
+}
+
+void imgui_new_line() {
+    ImGui::NewLine();
 }
 
 void imgui_separator() {
@@ -240,6 +252,15 @@ f32 imgui_get_window_width() {
 
 f32 imgui_get_window_height() {
     return ImGui::GetWindowHeight();
+}
+
+// Style
+void imgui_push_style_var_vec2(s32 idx, f32 x, f32 y) {
+    ImGui::PushStyleVar(static_cast<ImGuiStyleVar>(idx), ImVec2(x, y));
+}
+
+void imgui_pop_style_var(s32 count) {
+    ImGui::PopStyleVar(count);
 }
 
 // Drawing

@@ -54,6 +54,14 @@ args = ["imgui_slider_int", "(label:string value:&s32 min:s32 max:s32)", "->", "
 
 [[node]]
 type = "ffi"
+args = ["imgui_vslider_float", "(label:string width:f32 height:f32 value:&f32 min:f32 max:f32)", "->", "bool"]
+
+[[node]]
+type = "ffi"
+args = ["imgui_vslider_int", "(label:string width:f32 height:f32 value:&s32 min:s32 max:s32)", "->", "bool"]
+
+[[node]]
+type = "ffi"
 args = ["imgui_input_float", "(label:string value:&f32)", "->", "bool"]
 
 [[node]]
@@ -64,6 +72,10 @@ args = ["imgui_input_int", "(label:string value:&s32)", "->", "bool"]
 [[node]]
 type = "ffi"
 args = ["imgui_same_line", "()", "->", "void"]
+
+[[node]]
+type = "ffi"
+args = ["imgui_new_line", "()", "->", "void"]
 
 [[node]]
 type = "ffi"
@@ -214,6 +226,15 @@ args = ["imgui_get_window_width", "()", "->", "f32"]
 [[node]]
 type = "ffi"
 args = ["imgui_get_window_height", "()", "->", "f32"]
+
+# Style
+[[node]]
+type = "ffi"
+args = ["imgui_push_style_var_vec2", "(idx:s32 x:f32 y:f32)", "->", "void"]
+
+[[node]]
+type = "ffi"
+args = ["imgui_pop_style_var", "(count:s32)", "->", "void"]
 
 # Drawing
 [[node]]

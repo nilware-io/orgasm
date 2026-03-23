@@ -3939,6 +3939,187 @@ TEST(call_string_concat_with_dollar_ref) {
 }
 
 // ============================================================
+// rand builtin
+// ============================================================
+
+TEST(rand_parses) {
+    auto r = parse_expression("rand(1,10)");
+    ASSERT(r.root != nullptr);
+    ASSERT(r.error.empty());
+    ASSERT_EQ(r.root->kind, ExprKind::FuncCall);
+    ASSERT_EQ(r.root->builtin, BuiltinFunc::Rand);
+}
+
+TEST(rand_int_returns_int) {
+    GraphBuilder gb;
+    gb.add("e1", "expr", "rand(1,10)");
+    GraphInference gi(gb.pool);
+    gi.run(gb.graph);
+    auto* n = gb.find("e1");
+    ASSERT(n != nullptr);
+    ASSERT(n->outputs[0].resolved_type != nullptr);
+    // Both args are int literals, result should be int-like
+    ASSERT(n->outputs[0].resolved_type->kind == TypeKind::Scalar);
+}
+
+TEST(rand_float_returns_float) {
+    GraphBuilder gb;
+    gb.add("e1", "expr", "rand(0.0f,1.0f)");
+    GraphInference gi(gb.pool);
+    gi.run(gb.graph);
+    auto* n = gb.find("e1");
+    ASSERT(n != nullptr);
+    ASSERT(n->outputs[0].resolved_type != nullptr);
+    ASSERT_EQ(type_to_string(n->outputs[0].resolved_type), "f32");
+}
+
+TEST(rand_with_pin_refs) {
+    // rand($0, $1) should parse and have 2 pin refs
+    GraphBuilder gb;
+    gb.add("e1", "expr", "rand($0,$1)");
+    ASSERT_EQ((int)gb.find("e1")->inputs.size(), 2);
+}
+
+TEST(rand_too_few_args_errors) {
+    GraphBuilder gb;
+    gb.add("e1", "expr", "rand(1)");
+    GraphInference gi(gb.pool);
+    gi.run(gb.graph);
+    auto* n = gb.find("e1");
+    ASSERT(n != nullptr);
+    ASSERT(!n->error.empty());
+    ASSERT_CONTAINS(n->error, "rand requires 2 arguments");
+}
+
+TEST(rand_no_error_with_valid_args) {
+    GraphBuilder gb;
+    gb.add("e1", "expr", "rand(0.0f,1.0f)");
+    GraphInference gi(gb.pool);
+    gi.run(gb.graph);
+    auto* n = gb.find("e1");
+    ASSERT(n != nullptr);
+    ASSERT(n->error.empty());
+}
+
+// ============================================================
+// void node post_bang chain
+// ============================================================
+
+TEST(void_node_has_output) {
+    GraphBuilder gb;
+    auto& node = gb.add("v1", "void", "");
+    ASSERT_EQ((int)node.outputs.size(), 1);
+}
+
+TEST(void_output_type_resolves) {
+    // void node should not produce an error
+    GraphBuilder gb;
+    gb.add("v1", "void", "");
+    GraphInference gi(gb.pool);
+    gi.run(gb.graph);
+    auto* n = gb.find("v1");
+    ASSERT(n != nullptr);
+    ASSERT(n->error.empty());
+}
+
+// ============================================================
+// resize! with variable size
+// ============================================================
+
+TEST(resize_with_variable_size) {
+    GraphBuilder gb;
+    gb.add("decl1", "decl_var", "my_vec vector<f32>");
+    gb.add("decl2", "decl_var", "my_size s32");
+    gb.add("r1", "resize!", "$my_vec $my_size");
+    GraphInference gi(gb.pool);
+    gi.run(gb.graph);
+    auto* n = gb.find("r1");
+    ASSERT(n != nullptr);
+    ASSERT(n->error.empty());
+}
+
+TEST(resize_has_correct_pin_layout) {
+    // resize! should have: 1 bang_in, 2 inputs (target, size), 1 bang_out, 0 data outputs
+    GraphBuilder gb;
+    auto& node = gb.add("r1", "resize!", "$my_vec 32");
+    ASSERT_EQ((int)node.bang_inputs.size(), 1);
+    ASSERT_EQ((int)node.bang_outputs.size(), 1);
+    ASSERT_EQ((int)node.outputs.size(), 0);
+}
+
+// ============================================================
+// vslider FFI signatures
+// ============================================================
+
+TEST(vslider_float_ffi_parses) {
+    GraphBuilder gb;
+    gb.add("ffi1", "ffi", R"(imgui_vslider_float (label:string width:f32 height:f32 value:&f32 min:f32 max:f32) -> bool)");
+    auto* n = gb.find("ffi1");
+    ASSERT(n != nullptr);
+    ASSERT(n->error.empty());
+}
+
+TEST(vslider_int_ffi_parses) {
+    GraphBuilder gb;
+    gb.add("ffi1", "ffi", R"(imgui_vslider_int (label:string width:f32 height:f32 value:&s32 min:s32 max:s32) -> bool)");
+    auto* n = gb.find("ffi1");
+    ASSERT(n != nullptr);
+    ASSERT(n->error.empty());
+}
+
+TEST(call_vslider_with_string_concat_and_field) {
+    // Matches multifader pattern: call! $imgui_vslider_float "##amp"+$1 16 256 $0.amplitude 0 1
+    GraphBuilder gb;
+    gb.add("ffi1", "ffi", R"(imgui_vslider_float (label:string width:f32 height:f32 value:&f32 min:f32 max:f32) -> bool)");
+    gb.add("call1", "call!", R"($imgui_vslider_float "##amp"+$1 16 256 $0.amplitude 0 1)");
+    resolve_type_based_pins(gb.graph);
+    GraphInference gi(gb.pool);
+    gi.run(gb.graph);
+    auto* n = gb.find("call1");
+    ASSERT(n != nullptr);
+    // Should have 2 pins: $0 and $1
+    ASSERT_EQ((int)n->inputs.size(), 2);
+    // Should have no error
+    ASSERT(n->error.empty());
+}
+
+// ============================================================
+// new_line and same_line FFI
+// ============================================================
+
+TEST(same_line_ffi_parses) {
+    GraphBuilder gb;
+    gb.add("ffi1", "ffi", R"(imgui_same_line () -> void)");
+    auto* n = gb.find("ffi1");
+    ASSERT(n != nullptr);
+    ASSERT(n->error.empty());
+}
+
+TEST(new_line_ffi_parses) {
+    GraphBuilder gb;
+    gb.add("ffi1", "ffi", R"(imgui_new_line () -> void)");
+    auto* n = gb.find("ffi1");
+    ASSERT(n != nullptr);
+    ASSERT(n->error.empty());
+}
+
+TEST(push_style_var_vec2_ffi_parses) {
+    GraphBuilder gb;
+    gb.add("ffi1", "ffi", R"(imgui_push_style_var_vec2 (idx:s32 x:f32 y:f32) -> void)");
+    auto* n = gb.find("ffi1");
+    ASSERT(n != nullptr);
+    ASSERT(n->error.empty());
+}
+
+TEST(pop_style_var_ffi_parses) {
+    GraphBuilder gb;
+    gb.add("ffi1", "ffi", R"(imgui_pop_style_var (count:s32) -> void)");
+    auto* n = gb.find("ffi1");
+    ASSERT(n != nullptr);
+    ASSERT(n->error.empty());
+}
+
+// ============================================================
 // Main
 // ============================================================
 

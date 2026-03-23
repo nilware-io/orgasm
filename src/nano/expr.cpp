@@ -409,6 +409,7 @@ BuiltinFunc ExprParser::lookup_builtin(const std::string& name) {
     if (name == "and") return BuiltinFunc::And;
     if (name == "not") return BuiltinFunc::Not;
     if (name == "mod") return BuiltinFunc::Mod;
+    if (name == "rand") return BuiltinFunc::Rand;
     return BuiltinFunc::None;
 }
 
@@ -1118,6 +1119,17 @@ TypePtr TypeInferenceContext::infer_builtin_call(const ExprPtr& expr) {
             add_error("mod arguments must be same numeric type");
         }
         if ((a && a->is_generic) || (b && b->is_generic)) return pool.t_unknown;
+        return pool.t_unknown;
+    }
+
+    case BuiltinFunc::Rand: {
+        if (arg_types.size() < 2) { add_error("rand requires 2 arguments (min, max)"); return pool.t_unknown; }
+        auto a = arg_types[0], b = arg_types[1];
+        if (a && b && is_numeric(a) && is_numeric(b)) {
+            if (types_compatible(a, b)) return a;
+            add_error("rand arguments must be same numeric type");
+        }
+        if ((a && a->is_generic) || (b && b->is_generic)) return a ? a : b;
         return pool.t_unknown;
     }
 
