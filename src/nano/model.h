@@ -89,9 +89,14 @@ struct FlowNode {
 
 struct FlowLink {
     int id = 0;
-    std::string from_pin; // output pin id e.g. "42.out0"
-    std::string to_pin;   // input pin id e.g. "7.0"
+    std::string from_pin; // output pin id string (for serialization)
+    std::string to_pin;   // input pin id string (for serialization)
     std::string error;    // non-empty if this link has a type error (set during inference)
+    // Resolved pointers — populated by GraphIndex::rebuild(), not serialized
+    FlowPin* from = nullptr;
+    FlowPin* to = nullptr;
+    FlowNode* from_node = nullptr;
+    FlowNode* to_node = nullptr;
 };
 
 class FlowGraph {

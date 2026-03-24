@@ -39,15 +39,13 @@ std::vector<std::string> GraphInference::run(FlowGraph& graph) {
     // Phase 6: Check link type compatibility
     for (auto& link : graph.links) {
         if (!link.error.empty()) continue; // already has an error from lambda validation
-        FlowPin* from_pin = idx.find_pin(link.from_pin);
-        FlowPin* to_pin = idx.find_pin(link.to_pin);
-        if (from_pin && to_pin &&
-            from_pin->resolved_type && to_pin->resolved_type &&
-            !from_pin->resolved_type->is_generic && !to_pin->resolved_type->is_generic &&
-            !types_compatible(from_pin->resolved_type, to_pin->resolved_type)) {
+        if (link.from && link.to &&
+            link.from->resolved_type && link.to->resolved_type &&
+            !link.from->resolved_type->is_generic && !link.to->resolved_type->is_generic &&
+            !types_compatible(link.from->resolved_type, link.to->resolved_type)) {
             link.error = "Type mismatch: " +
-                type_to_string(from_pin->resolved_type) + " vs " +
-                type_to_string(to_pin->resolved_type);
+                type_to_string(link.from->resolved_type) + " vs " +
+                type_to_string(link.to->resolved_type);
         }
     }
 
@@ -193,11 +191,9 @@ void GraphInference::resolve_pin_type_names(FlowGraph& graph) {
 bool GraphInference::propagate_connections(FlowGraph& graph) {
     bool changed = false;
     for (auto& link : graph.links) {
-        auto* from_pin = idx.find_pin(link.from_pin);
-        auto* to_pin = idx.find_pin(link.to_pin);
-        if (from_pin && to_pin && from_pin->resolved_type) {
-            if (!to_pin->resolved_type || (to_pin->resolved_type->is_generic && !from_pin->resolved_type->is_generic)) {
-                to_pin->resolved_type = from_pin->resolved_type;
+        if (link.from && link.to && link.from->resolved_type) {
+            if (!link.to->resolved_type || (link.to->resolved_type->is_generic && !link.from->resolved_type->is_generic)) {
+                link.to->resolved_type = link.from->resolved_type;
                 changed = true;
             }
         }
@@ -1041,8 +1037,8 @@ bool GraphInference::resolve_lambdas(FlowGraph& graph) {
     for (auto& node : graph.nodes) {
         for (auto& link : graph.links) {
             if (link.from_pin != node.lambda_grab.id) continue;
-            auto* target_pin = idx.find_pin(link.to_pin);
-            if (!target_pin || !target_pin->resolved_type) continue;
+            if (!link.to || !link.to->resolved_type) continue;
+            auto* target_pin = link.to;
 
             // Resolve through Named type aliases
             auto expected = target_pin->resolved_type;
@@ -1093,10 +1089,10 @@ FlowNode* GraphInference::find_node_by_pin(FlowGraph& graph, const std::string& 
 
 void GraphInference::follow_bang_chain(FlowGraph& graph, const std::string& from_pin_id,
                       std::vector<FlowPin*>& params, std::set<std::string>& visited) {
-    for (auto& l : graph.links) {
-        if (l.from_pin != from_pin_id) continue;
-        auto* target_node = find_node_by_pin(graph, l.to_pin);
-        if (target_node) collect_lambda_params(graph, *target_node, params, visited);
+    auto* pin = idx.find_pin(from_pin_id);
+    if (!pin) return;
+    for (auto* target_node : idx.follow_bang(pin)) {
+        collect_lambda_params(graph, *target_node, params, visited);
     }
 }
 
@@ -1109,17 +1105,14 @@ void GraphInference::collect_lambda_params(FlowGraph& graph, FlowNode& node,
     //    Skip Lambda inputs — they define inner lambda boundaries
     for (auto& inp : node.inputs) {
         if (inp.direction == FlowPin::Lambda) continue;
-        std::string source_pin_id;
-        for (auto& l : graph.links) {
-            if (l.to_pin == inp.id) { source_pin_id = l.from_pin; break; }
-        }
-        if (source_pin_id.empty()) {
+        auto* src_pin = idx.source_pin(&inp);
+        if (!src_pin) {
             params.push_back(&inp);
         } else {
             // Don't recurse through as_lambda (LambdaGrab) pins — they are lambda boundaries
-            auto* src_node = find_node_by_pin(graph, source_pin_id);
+            auto* src_node = idx.source_node(&inp);
             if (src_node) {
-                bool is_lambda_grab = (source_pin_id == src_node->lambda_grab.id);
+                bool is_lambda_grab = (src_pin->direction == FlowPin::LambdaGrab);
                 if (!is_lambda_grab)
                     collect_lambda_params(graph, *src_node, params, visited);
             }

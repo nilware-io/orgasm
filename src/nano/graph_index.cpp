@@ -33,26 +33,24 @@ void GraphIndex::rebuild(FlowGraph& graph) {
         index_pin(node.bang_pin);
     }
 
-    // Index all links
+    // Index all links and resolve their endpoint pointers
     for (auto& link : graph.links) {
-        // Resolve link endpoints to pointers
         auto from_it = pin_map.find(link.from_pin);
         auto to_it = pin_map.find(link.to_pin);
-        if (from_it != pin_map.end() && to_it != pin_map.end()) {
-            FlowPin* from = from_it->second;
-            FlowPin* to = to_it->second;
 
-            source_of[to] = from;
+        // Resolve pointers directly on the link
+        link.from = (from_it != pin_map.end()) ? from_it->second : nullptr;
+        link.to = (to_it != pin_map.end()) ? to_it->second : nullptr;
 
-            auto from_node_it = pin_to_node.find(link.from_pin);
-            if (from_node_it != pin_to_node.end()) {
-                source_node_of[to] = from_node_it->second;
-            }
+        auto fn_it = pin_to_node.find(link.from_pin);
+        auto tn_it = pin_to_node.find(link.to_pin);
+        link.from_node = (fn_it != pin_to_node.end()) ? fn_it->second : nullptr;
+        link.to_node = (tn_it != pin_to_node.end()) ? tn_it->second : nullptr;
 
-            auto to_node_it = pin_to_node.find(link.to_pin);
-            if (to_node_it != pin_to_node.end()) {
-                bang_targets[from].push_back(to_node_it->second);
-            }
+        if (link.from && link.to) {
+            source_of[link.to] = link.from;
+            if (link.from_node) source_node_of[link.to] = link.from_node;
+            if (link.to_node) bang_targets[link.from].push_back(link.to_node);
         }
     }
 }
