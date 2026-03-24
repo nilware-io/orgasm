@@ -139,10 +139,13 @@ std::vector<std::string> GraphInference::run(FlowGraph& graph) {
         bool in_flow = false;
         for (auto& t : node.triggers)
             if (idx.source_pin(t.get())) { in_flow = true; break; }
-        // Also check if it's a lambda root (as_lambda connected)
-        if (!in_flow) {
+        // Lambda roots have their inputs validated by the lambda type check,
+        // not here — unconnected inputs are lambda parameters, not errors.
+        {
+            bool is_lambda_root = false;
             for (auto& link : graph.links)
-                if (link.from_pin == node.lambda_grab.id) { in_flow = true; break; }
+                if (link.from_pin == node.lambda_grab.id) { is_lambda_root = true; break; }
+            if (is_lambda_root) continue;
         }
         // Event nodes are always in flow
         if (nt->is_event) in_flow = true;
