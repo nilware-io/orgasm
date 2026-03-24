@@ -1652,34 +1652,66 @@ void FlowEditorWindow::draw() {
     if (ImGui::IsItemHovered() || ImGui::IsItemActive())
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
 
-    // --- Bottom panel: errors ---
-    ImGui::BeginChild("##error_panel", {canvas_w, bottom_panel_height_}, true);
-    ImGui::TextUnformatted("Errors");
-    ImGui::Separator();
-    for (auto& node : active().graph.nodes) {
-        if (node.error.empty()) continue;
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 100, 100, 255));
-        std::string label = std::string(node_type_str(node.type_id)) + " [" + node.guid.substr(0, 8) + "]: " + node.error;
-        if (ImGui::Selectable(label.c_str())) {
-            center_on_node(node, {canvas_w, canvas_h});
-        }
-        ImGui::PopStyleColor();
-    }
-    for (auto& link : active().graph.links) {
-        if (link.error.empty()) continue;
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 160, 80, 255));
-        std::string label = "link [" + link.from_pin.substr(0, 8) + "->...]: " + link.error;
-        if (ImGui::Selectable(label.c_str())) {
-            // Find source node and center on it
-            auto dot = link.from_pin.find('.');
-            if (dot != std::string::npos) {
-                std::string guid = link.from_pin.substr(0, dot);
-                for (auto& n : active().graph.nodes) {
-                    if (n.guid == guid) { center_on_node(n, {canvas_w, canvas_h}); break; }
+    // --- Bottom panel: tabbed (Errors / Build Log) ---
+    ImGui::BeginChild("##bottom_panel", {canvas_w, bottom_panel_height_}, true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    if (ImGui::BeginTabBar("##bottom_tabs")) {
+        // Count errors for tab label
+        int error_count = 0;
+        for (auto& node : active().graph.nodes) if (!node.error.empty()) error_count++;
+        for (auto& link : active().graph.links) if (!link.error.empty()) error_count++;
+
+        char errors_label[64];
+        snprintf(errors_label, sizeof(errors_label), "Errors%s", error_count > 0 ? " (!)" : "");
+
+        if (ImGui::BeginTabItem(errors_label)) {
+            ImGui::BeginChild("##errors_scroll", {0, 0}, false);
+            for (auto& node : active().graph.nodes) {
+                if (node.error.empty()) continue;
+                ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 100, 100, 255));
+                std::string label = std::string(node_type_str(node.type_id)) + " [" + node.guid.substr(0, 8) + "]: " + node.error;
+                if (ImGui::Selectable(label.c_str())) {
+                    center_on_node(node, {canvas_w, canvas_h});
                 }
+                ImGui::PopStyleColor();
             }
+            for (auto& link : active().graph.links) {
+                if (link.error.empty()) continue;
+                ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 160, 80, 255));
+                std::string label = "link [" + link.from_pin.substr(0, 8) + "->...]: " + link.error;
+                if (ImGui::Selectable(label.c_str())) {
+                    auto dot = link.from_pin.find('.');
+                    if (dot != std::string::npos) {
+                        std::string guid = link.from_pin.substr(0, dot);
+                        for (auto& n : active().graph.nodes) {
+                            if (n.guid == guid) { center_on_node(n, {canvas_w, canvas_h}); break; }
+                        }
+                    }
+                }
+                ImGui::PopStyleColor();
+            }
+            ImGui::Dummy({0, bottom_panel_height_ * 0.5f});
+            ImGui::EndChild();
+            ImGui::EndTabItem();
         }
-        ImGui::PopStyleColor();
+
+        if (ImGui::BeginTabItem("Build Log", nullptr, show_build_log_ ? ImGuiTabItemFlags_SetSelected : 0)) {
+            show_build_log_ = false;
+            ImGui::BeginChild("##buildlog_scroll", {0, 0}, false);
+            {
+                std::lock_guard<std::mutex> lock(build_log_mutex_);
+                ImGui::TextWrapped("%s", build_log_.c_str());
+            }
+            // Bottom padding so the last line isn't stuck at the edge
+            ImGui::Dummy({0, bottom_panel_height_ * 0.5f});
+            if (build_state_ == BuildState::Building) {
+                if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 40.0f)
+                    ImGui::SetScrollHereY(1.0f);
+            }
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+
+        ImGui::EndTabBar();
     }
     ImGui::EndChild();
 
@@ -2104,26 +2136,7 @@ void FlowEditorWindow::draw_toolbar() {
         break;
     case BuildState::BuildFailed:
         ImGui::TextColored({1.0f, 0.2f, 0.2f, 1.0f}, "Build Failed");
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Show Log")) {
-            show_build_log_ = true;
-        }
         break;
-    }
-
-    // Build log popup
-    if (show_build_log_) {
-        ImGui::SetNextWindowSize({600, 400}, ImGuiCond_FirstUseEver);
-        if (ImGui::Begin("Build Log", &show_build_log_)) {
-            std::lock_guard<std::mutex> lock(build_log_mutex_);
-            ImGui::TextWrapped("%s", build_log_.c_str());
-            // Auto-scroll to bottom while building
-            if (build_state_ == BuildState::Building) {
-                if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 20.0f)
-                    ImGui::SetScrollHereY(1.0f);
-            }
-        }
-        ImGui::End();
     }
 }
 

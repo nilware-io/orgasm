@@ -153,7 +153,7 @@ private:
 
     // Panel sizes
     float side_panel_width_ = 200.0f;
-    float bottom_panel_height_ = 150.0f;
+    float bottom_panel_height_ = 250.0f;
 
     // Run/Stop
     enum class BuildState { Idle, Building, Running, BuildFailed };
