@@ -268,6 +268,7 @@ void generate_shadow_nodes(FlowGraph& graph) {
             }
             node.args = kept;
             node.rebuild_pin_ids();
+            node.parse_args(); // re-parse with only lvalue tokens
             break;
         }
     }

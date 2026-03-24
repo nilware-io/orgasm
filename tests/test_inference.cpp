@@ -4405,6 +4405,28 @@ TEST(shadow_store_value_type_propagates) {
     ASSERT(s1->error.empty());
 }
 
+TEST(shadow_store_two_pin_refs_in_value) {
+    // store! $0 $0+$1.s — $0 is lvalue (kept), $1.s is in shadow value expr
+    // $0 = &f32 (from decl_local), $1 = osc_res (from expr that returns osc_res)
+    GraphBuilder gb;
+    gb.add("dt_osc_res", "decl_type", "osc_res s:f32 e:bool");
+    gb.add("dl_mixs", "decl_local", "mixs f32");
+    // A simple expr that outputs osc_res type — use a new node
+    gb.add("dv_res", "decl_var", "my_res osc_res");
+    gb.add("res_expr", "expr", "$my_res");     // outputs osc_res
+    gb.add("st", "store!", "$0 $0+$1.s");
+    gb.link("dl_mixs.out0", "st.0");            // $0 = &f32
+    gb.link("res_expr.out0", "st.1");            // $1 = osc_res
+
+    auto errors = gb.run_full_pipeline();
+    for (auto& e : errors) printf("    ERR: %s\n", e.c_str());
+
+    auto* st = gb.find("st");
+    ASSERT(st != nullptr);
+
+    ASSERT(st->error.empty());
+}
+
 // ============================================================
 // Main
 // ============================================================
