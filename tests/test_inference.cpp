@@ -3991,6 +3991,26 @@ TEST(rand_too_few_args_errors) {
     ASSERT_CONTAINS(n->error, "rand requires 2 arguments");
 }
 
+TEST(rand_int_literals_backpropagate_to_float) {
+    // When rand(200,12000) is assigned to a f32 field, the int literals
+    // should backpropagate to f32 and rand should return f32
+    GraphBuilder gb;
+    gb.add("dt1", "decl_type", "my_struct freq:f32");
+    gb.add("dv1", "decl_var", "my_var my_struct");
+    gb.add("s1", "store!", "$my_var.freq rand(200,12000)");
+    GraphInference gi(gb.pool);
+    gi.run(gb.graph);
+    auto* n = gb.find("s1");
+    ASSERT(n != nullptr);
+    ASSERT(n->error.empty());
+    // The store's parsed expr for rand should have resolved to f32
+    ASSERT(n->parsed_exprs.size() >= 2);
+    auto& rand_expr = n->parsed_exprs[1];
+    ASSERT(rand_expr != nullptr);
+    ASSERT(rand_expr->resolved_type != nullptr);
+    ASSERT_EQ(type_to_string(rand_expr->resolved_type), "f32");
+}
+
 TEST(rand_no_error_with_valid_args) {
     GraphBuilder gb;
     gb.add("e1", "expr", "rand(0.0f,1.0f)");

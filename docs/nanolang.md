@@ -31,6 +31,38 @@ A value in NanoProg has a **category** indicated by a prefix sigil:
 | `f32` | 32-bit float (float)     |
 | `f64` | 64-bit float (double)    |
 
+### Type Categories
+
+| Category   | Types                          | Description                  |
+|------------|--------------------------------|------------------------------|
+| signed     | `s8`, `s16`, `s32`, `s64`      | Signed integers              |
+| unsigned   | `u8`, `u16`, `u32`, `u64`      | Unsigned integers            |
+| integer    | signed ∪ unsigned              | All integer types            |
+| float      | `f32`, `f64`                   | Floating-point types         |
+| numeric    | integer ∪ float                | All numeric types            |
+| literal    | any typed literal value        | Compile-time constant value  |
+
+These categories are generic type constructors and can be parameterized:
+
+#### Generic Type Notation
+
+`?` is the unresolved type indicator. `|` is the combination (union) type indicator. Named bindings allow referencing the same resolved type across a signature.
+
+| Notation | Meaning |
+|----------|---------|
+| `signed<s32>` | Concrete signed type `s32` |
+| `integer<u64>` | Concrete integer type `u64` |
+| `numeric<s32>` | Concrete numeric type `s32` |
+| `signed<?>` | Any signed type (`s8`, `s16`, `s32`, or `s64`) |
+| `float<?>` | Any float type (`f32` or `f64`) |
+| `signed<s8\|s32>` | Union — matches `s8` or `s32` |
+| `signed<T:?>` | Named generic — `T` binds to whichever signed type is resolved, and can be referenced elsewhere |
+| `numeric<T:?>` | Named generic — `T` binds to whichever numeric type is resolved |
+
+A generic type written without `<>` implies `<?>`. For example, `numeric` in a type descriptor is equivalent to `numeric<?>` — it matches any numeric type.
+
+Named generics express constraints across arguments and return types. For example, a function signature `(a:numeric<T:?>, b:numeric<T>) -> numeric<T>` requires both args and the return type to resolve to the same concrete numeric type.
+
 ### Special Types
 
 | Type     | Description                                    |
@@ -140,6 +172,8 @@ These are structural — they define types and variables but have no runtime pin
 - `dup <value>` — Pass through (duplicate) a value
 - `erase <collection> <key>` — Erase from collection (no bangs). Same validation rules as `erase!`. Returns an iterator pointing to the next element.
 - `next <iterator>` — Advance an iterator to the next element. Input must be a container iterator. Returns the same iterator type, advanced by one position. Equivalent to `std::next(it)` in C++.
+- `str <value>` — Convert a value to `string`. Input is any type, output is always `string`. Codegen emits `std::to_string(value)`.
+- `cast <dest_type>` — Cast a value to a different type. Currently only supports `array<T,N>` → `vector<T>` conversions. The dest type is specified as the node's arg (e.g. `cast vector<f32>`). Output type is always the dest type. Codegen emits `vector<T>(src.begin(), src.end())`.
 - `lock <mutex> <fn>` — Execute lambda while holding mutex lock. Mutex auto-decays to reference. Lambda takes no args: `() -> T`. If T is non-void, produces a data output. The node's post_bang fires **inside** the lock scope (all chained operations run under the lock).
 - `call <fn> [args...]` — Call a function. First arg is the function reference (`$name`). Input pins are dynamically created from the function's argument list. Output pin created from return type (omitted if void). Has lambda handle and post_bang (side bang).
 
@@ -169,6 +203,7 @@ Nodes with input or output bangs:
 - `lock! <mutex> <fn>` — Execute lambda while holding mutex lock (bang in + bang out). Mutex auto-decays to reference. Lambda takes no args: `() -> T`. If T is non-void, produces a data output. Bang output fires **after** the lock is released.
 - `call! <fn> [args...]` — Call a function (bang in + bang out). Same as `call` but with explicit bang control flow. Input/output pins dynamically created from function signature.
 - `event! ~<name>` — Event source. Name must be prefixed with `~`. Outputs derived from `decl_event` function args. Return type must be void.
+- `resize! <collection> <size>` — Resize a vector (bang in + bang out). First arg is the target vector (`$name`), second arg is the new size (integer). If the size arg is not `u64`, a `static_cast<size_t>()` is emitted.
 - `output_mix! <value>` — Mix into audio output (bang in)
 - `on_key_down!` — Klavier key press event
 - `on_key_up!` — Klavier key release event
@@ -201,6 +236,7 @@ All non-expr nodes support **inline expressions** in their arguments. Each space
 
 - Declaration nodes (`decl_type`, `decl_var`, `decl_local`, `decl_event`) — args are type/field definitions
 - `new` — args are type names
+- `cast` — args are type names
 - `event!` — args are event names
 - `label` — args are display text
 
@@ -256,6 +292,8 @@ Not indexable: `list`, `queue`, `set`, `ordered_set` (use iterators or `?[]` ins
 - **Non-map iterators** (`vector_iterator<V>`, `list_iterator<V>`, `set_iterator<V>`, `ordered_set_iterator<V>`): auto-dereference to the value type. Fields of `V` are accessed directly (e.g. `$it.p` where `it : vector_iterator<osc_def>` accesses `osc_def.p`).
 - **Map iterators** (`map_iterator<K,V>`, `ordered_map_iterator<K,V>`): have `.key` (returns `K`) and `.value` (returns `V`). No auto-dereference — use `.value.field` to access value fields.
 
+**String concatenation:** `string + string` — the `+` operator concatenates two strings. Both operands must be `string`. To concatenate a non-string value, convert it first with `str`.
+
 **Logical/bitwise (function-call syntax only):** `or(a,b)`, `xor(a,b)`, `and(a,b)`, `not(a)`, `mod(a,b)` — these are **not** infix operators, only callable as functions. Operate on integer types (`u8`/`s8`/`u16`/`s16`/`u32`/`s32`/`u64`/`s64`).
 
 ### Operator Precedence (highest to lowest)
@@ -275,20 +313,25 @@ Note: `or`, `and`, `xor`, `not`, `mod` are functions, not operators — they do 
 
 ### Built-in Functions
 
-Called as `fn(arg1, arg2, ...)`.
+Called as `fn(arg1, arg2, ...)`. All built-ins are generic — the return type is resolved from context and the input types follow.
 
-| Function | Accepts     | Returns   |
-|----------|-------------|-----------|
-| `sin`    | `f32`/`f64` | same      |
-| `cos`    | `f32`/`f64` | same      |
-| `pow`    | `f32`/`f64` | same      |
-| `exp`    | `f32`/`f64` | same      |
-| `log`    | `f32`/`f64` | same      |
-| `or`     | integer     | same      |
-| `xor`    | integer     | same      |
-| `and`    | integer     | same      |
-| `not`    | integer     | same      |
-| `mod`    | integer     | same      |
+| Function | Returns (constraint)  | Inputs (derived from return type) |
+|----------|-----------------------|-----------------------------------|
+| `sin`    | `f32`/`f64`           | 1 arg, same as return             |
+| `cos`    | `f32`/`f64`           | 1 arg, same as return             |
+| `pow`    | `f32`/`f64`/unsigned integer | float: 2 args, same as return. integer: base must be literal `2`, exponent is unsigned integer |
+| `exp`    | `f32`/`f64`           | 1 arg, same as return             |
+| `log`    | `f32`/`f64`           | 1 arg, same as return             |
+| `or`     | integer               | 2 args, same as return            |
+| `xor`    | integer               | 2 args, same as return            |
+| `and`    | integer               | 2 args, same as return            |
+| `not`    | integer               | 1 arg, same as return             |
+| `mod`    | numeric               | 2 args, same as return            |
+| `rand`   | numeric               | 2 args (min, max), same as return |
+
+`rand(min, max)` — returns a uniformly distributed random number in `[min, max]`. Both args must be the same numeric type. Returns `f32`/`f64` (using `std::uniform_real_distribution`) or integer (using `std::uniform_int_distribution`) depending on the resolved output type.
+
+All built-in functions have generic return types — their concrete output type is determined by the context they appear in. When a built-in call appears in a typed context (e.g. assigned to an `f32` field), the expected type backpropagates through the call to resolve both the output type and any generic literal arguments. For example, `store! $0.freq rand(200,12000)` where `freq` is `f32` resolves both integer literals to `f32` and produces a float random.
 
 ### Lambda Calls
 
@@ -379,6 +422,11 @@ TOML-like format:
 ```
 version = "nanoprog@0"
 
+[viewport]
+x = -500.0
+y = -200.0
+zoom = 1.5
+
 [[node]]
 guid = "a3f7c1b2e9d04856"
 type = "expr"
@@ -386,6 +434,16 @@ args = ["$0+$1"]
 position = [100, 200]
 connections = ["a3f7c1b2e9d04856.out0->b4c8d9e0f1a23456.0"]
 ```
+
+### Viewport Section
+
+The optional `[viewport]` section stores the editor's camera state. It must appear after `version` and before any `[[node]]` entries.
+
+| Field  | Type  | Description                    |
+|--------|-------|--------------------------------|
+| `x`    | float | Horizontal scroll offset       |
+| `y`    | float | Vertical scroll offset         |
+| `zoom` | float | Zoom level (1.0 = default)     |
 
 ### Connection Format
 

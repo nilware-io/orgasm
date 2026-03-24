@@ -1201,8 +1201,20 @@ void TypeInferenceContext::resolve_int_literals(const ExprPtr& expr, const TypeP
         resolve_int_literals(expr->children[0], expected);
         break;
     case ExprKind::FuncCall:
-        for (size_t i = 1; i < expr->children.size(); i++)
-            resolve_int_literals(expr->children[i], nullptr);
+        // TODO: Generalize this — any builtin whose return type is generic (determined
+        // solely by its args) should backpropagate `expected` to its children, so that
+        // e.g. pow(2, 3) assigned to f32 resolves both literals as f32. Currently only
+        // rand does this. Extending requires checking whether the builtin's inferred
+        // return type is generic before propagating, and re-inferring after resolution.
+        if (expr->builtin == BuiltinFunc::Rand) {
+            for (size_t i = 1; i < expr->children.size(); i++)
+                resolve_int_literals(expr->children[i], expected);
+            if (expected && !expected->is_generic && is_numeric(expected))
+                expr->resolved_type = expected;
+        } else {
+            for (size_t i = 1; i < expr->children.size(); i++)
+                resolve_int_literals(expr->children[i], nullptr);
+        }
         break;
     case ExprKind::Index:
         resolve_int_literals(expr->children[1], nullptr);

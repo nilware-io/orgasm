@@ -287,6 +287,26 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
                 ctx.resolve_int_literals(expr, result_type);
         }
 
+        // For store!/store: backpropagate target type to value expression
+        // so that e.g. rand(200,12000) stored into f32 field resolves args as f32.
+        // TODO: This backpropagation pattern should generalize to all assignment-like
+        // contexts (e.g. struct field init in new, function call args), not just store.
+        if ((node.type == "store!" || node.type == "store") && node.parsed_exprs.size() >= 2) {
+            auto& target_expr = node.parsed_exprs[0];
+            auto& value_expr = node.parsed_exprs[1];
+            if (target_expr && value_expr && target_expr->resolved_type &&
+                !target_expr->resolved_type->is_generic) {
+                ctx.resolve_int_literals(value_expr, target_expr->resolved_type);
+                // Re-infer value to pick up resolved literal types
+                ctx.errors.clear();
+                auto new_type = ctx.infer(value_expr);
+                if (new_type && !new_type->is_generic && value_expr->resolved_type != new_type) {
+                    value_expr->resolved_type = new_type;
+                    changed = true;
+                }
+            }
+        }
+
         // Propagate PinRef resolved types back to input pins
         propagate_pin_ref_types(node, changed);
 
