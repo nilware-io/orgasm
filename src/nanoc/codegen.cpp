@@ -883,8 +883,8 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
                         // Determine the expected function type from this input's resolved_type
                         // Try the type_name first (it might be a named alias like "gen_fn")
                         TypePtr fn_type = nullptr;
-                        if (!node.inputs[i].type_name.empty() && node.inputs[i].type_name != "value") {
-                            fn_type = pool.intern(node.inputs[i].type_name);
+                        if (node.inputs[i].resolved_type) {
+                            fn_type = node.inputs[i].resolved_type;
                             // If it's still Named, look up the struct field type
                             if (fn_type && fn_type->kind == TypeKind::Named) {
                                 // Find the actual type from the decl_type node

@@ -113,11 +113,12 @@ void reconcile_pins(std::vector<FlowPin>& pins,
             auto pin = pins[it->second];
             pin.direction = d.dir;
             pin.type_name = d.type_name;
+            if (d.resolved) pin.resolved_type = d.resolved;
             new_pins.push_back(std::move(pin));
             existing.erase(it);
         } else {
             std::string id = node_guid + "." + d.name;
-            new_pins.push_back({id, d.name, d.type_name, nullptr, d.dir});
+            new_pins.push_back({id, d.name, d.type_name, d.resolved, d.dir});
         }
     }
 
@@ -143,7 +144,7 @@ void resolve_type_based_pins(FlowGraph& graph) {
                 auto fields = parse_type_fields(*type_node);
                 std::vector<DesiredPinDesc> desired;
                 for (auto& field : fields)
-                    desired.push_back({field.name, field.type_name, FlowPin::Input});
+                    desired.push_back({field.name, field.type_name, FlowPin::Input, field.resolved});
                 reconcile_pins(node.inputs, desired, node.guid, false, graph.links);
                 // Set output type to the instantiated type
                 for (auto& p : node.outputs) p.type_name = inst_type_name;
@@ -158,7 +159,7 @@ void resolve_type_based_pins(FlowGraph& graph) {
                 auto args = parse_event_args(*event_decl, graph);
                 std::vector<DesiredPinDesc> desired;
                 for (auto& arg : args)
-                    desired.push_back({arg.name, arg.type_name, FlowPin::Output});
+                    desired.push_back({arg.name, arg.type_name, FlowPin::Output, arg.resolved});
                 reconcile_pins(node.outputs, desired, node.guid, true, graph.links);
                 node.rebuild_pin_ids();
             }
@@ -213,14 +214,14 @@ void resolve_type_based_pins(FlowGraph& graph) {
 
                 // Preserve existing $N/@N ref pins (created by scan_slots during loading)
                 for (auto& p : node.inputs) {
-                    desired_inputs.push_back({p.name, p.type_name, p.direction});
+                    desired_inputs.push_back({p.name, p.type_name, p.direction, p.resolved_type});
                 }
 
                 // Add remaining function args not covered by inline expressions
                 for (int ai = num_inline_args; ai < (int)fn_type->func_args.size(); ai++) {
                     auto& arg = fn_type->func_args[ai];
                     std::string type_str = arg.type ? type_to_string(arg.type) : "value";
-                    desired_inputs.push_back({arg.name, type_str, FlowPin::Input});
+                    desired_inputs.push_back({arg.name, type_str, FlowPin::Input, arg.type});
                 }
                 reconcile_pins(node.inputs, desired_inputs, node.guid, false, graph.links);
 
@@ -241,6 +242,7 @@ void resolve_type_based_pins(FlowGraph& graph) {
                             for (auto& p : node.inputs) {
                                 if (p.name == pin_name && fn_type->func_args[ai].type) {
                                     p.type_name = type_to_string(fn_type->func_args[ai].type);
+                                    p.resolved_type = fn_type->func_args[ai].type;
                                 }
                             }
                         }
@@ -252,7 +254,7 @@ void resolve_type_based_pins(FlowGraph& graph) {
                 if (fn_type->return_type && fn_type->return_type->kind != TypeKind::Void) {
                     std::string ret_str = type_to_string(fn_type->return_type);
                     std::vector<DesiredPinDesc> desired_outputs;
-                    desired_outputs.push_back({"result", ret_str, FlowPin::Output});
+                    desired_outputs.push_back({"result", ret_str, FlowPin::Output, fn_type->return_type});
                     reconcile_pins(node.outputs, desired_outputs, node.guid, true, graph.links);
                 } else {
                     // Void return: no outputs

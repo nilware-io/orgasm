@@ -10,7 +10,7 @@
 // For type-based nodes, we only care about simple "name:type" fields
 // (not function signatures or array types).
 // Returns list of {field_name, field_type} pairs.
-struct TypeField { std::string name; std::string type_name; };
+struct TypeField { std::string name; std::string type_name; TypePtr resolved = nullptr; };
 std::vector<TypeField> parse_type_fields(const FlowNode& type_node);
 
 // Find a "decl_type" node by its name (first arg token) in the graph
@@ -26,7 +26,7 @@ const FlowNode* find_event_node(const FlowGraph& graph, const std::string& event
 std::vector<TypeField> parse_event_args(const FlowNode& event_decl, const FlowGraph& graph);
 
 // Desired pin description for reconciliation
-struct DesiredPinDesc { std::string name; std::string type_name; FlowPin::Direction dir; };
+struct DesiredPinDesc { std::string name; std::string type_name; FlowPin::Direction dir; TypePtr resolved = nullptr; };
 
 // Reconcile a pin vector with a desired pin list, preserving links where pin names match.
 void reconcile_pins(std::vector<FlowPin>& pins,

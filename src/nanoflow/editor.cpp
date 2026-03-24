@@ -1228,8 +1228,8 @@ void FlowEditorWindow::draw() {
                     std::string type_str;
                     if (pin->resolved_type)
                         type_str = type_to_string(pin->resolved_type);
-                    else if (!pin->type_name.empty() && pin->type_name != "value" && pin->type_name != "bang" && pin->type_name != "lambda")
-                        type_str = pin->type_name;
+                    else if (pin->direction == FlowPin::BangInput || pin->direction == FlowPin::BangOutput)
+                        type_str = "bang";
                     else
                         type_str = "?";
                     ImGui::BeginTooltip();

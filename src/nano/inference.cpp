@@ -160,8 +160,10 @@ void GraphInference::build_context(FlowGraph& graph) {
             // Struct type with fields
             auto struct_type = std::make_shared<TypeExpr>();
             struct_type->kind = TypeKind::Struct;
-            for (auto& f : fields)
-                struct_type->fields.push_back({f.name, pool.intern(f.type_name)});
+            for (auto& f : fields) {
+                if (!f.resolved) f.resolved = pool.intern(f.type_name);
+                struct_type->fields.push_back({f.name, f.resolved});
+            }
             ctx.named_types[tokens[0]] = struct_type;
         }
         // Type aliases (no fields) are resolved via registry.parsed
@@ -170,9 +172,15 @@ void GraphInference::build_context(FlowGraph& graph) {
 
 void GraphInference::resolve_pin_type_names(FlowGraph& graph) {
     auto resolve = [&](FlowPin& p) {
+        if (p.resolved_type) return; // already resolved (e.g. set directly by type_utils)
+        // Bang and lambda pins don't need type resolution from type_name
+        if (p.direction == FlowPin::BangInput || p.direction == FlowPin::BangOutput) {
+            p.resolved_type = pool.t_bang;
+            return;
+        }
+        if (p.direction == FlowPin::Lambda || p.direction == FlowPin::LambdaGrab) return;
+        // For data pins: resolve type_name string if it has a real type (not "value" placeholder)
         if (p.type_name.empty() || p.type_name == "value") return;
-        if (p.type_name == "bang") { p.resolved_type = pool.t_bang; return; }
-        if (p.type_name == "lambda") return;
         p.resolved_type = pool.intern(p.type_name);
     };
     for (auto& node : graph.nodes) {
