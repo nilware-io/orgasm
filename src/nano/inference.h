@@ -46,4 +46,7 @@ struct GraphInference {
 
     void validate_lambda(FlowNode& node, const std::vector<FlowPin*>& params,
                          const TypePtr& expected, FlowLink& link);
+
+    // Pre-compute resolved data for codegen (lambda roots, fn types, cast flags)
+    void precompute_resolved_data(FlowGraph& graph);
 };

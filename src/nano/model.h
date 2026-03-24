@@ -71,6 +71,15 @@ struct FlowNode {
     std::string last_parsed_args;        // for cache invalidation
     bool type_dirty = true;              // set true when args/connections change
 
+    // Pre-computed by inference — consumed by codegen
+    struct ResolvedLambda {
+        FlowNode* root = nullptr;              // lambda root node (connected via Lambda pin)
+        std::vector<FlowPin*> params;          // unconnected input pins = lambda parameters
+    };
+    std::vector<ResolvedLambda> resolved_lambdas;  // one per Lambda-direction input pin
+    TypePtr resolved_fn_type;                      // for store!/call: fully resolved function type
+    bool needs_narrowing_cast = false;             // for new: fields need static_cast
+
     // Build a pin id from this node's guid and a pin name
     std::string pin_id(const std::string& pin_name) const { return guid + "." + pin_name; }
 

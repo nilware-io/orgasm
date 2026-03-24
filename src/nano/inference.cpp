@@ -37,7 +37,10 @@ std::vector<std::string> GraphInference::run(FlowGraph& graph) {
         if (!changed) break;
     }
 
-    // Phase 6: Check link type compatibility
+    // Phase 6: Pre-compute resolved data for codegen
+    precompute_resolved_data(graph);
+
+    // Phase 7: Check link type compatibility
     for (auto& link : graph.links) {
         if (!link.error.empty()) continue; // already has an error from lambda validation
         if (link.from && link.to &&
@@ -1166,5 +1169,60 @@ void GraphInference::validate_lambda(FlowNode& node, const std::vector<FlowPin*>
         link.error = "Lambda return type mismatch: " +
             type_to_string(lambda_type->return_type) + " vs expected " +
             type_to_string(expected->return_type);
+    }
+}
+
+void GraphInference::precompute_resolved_data(FlowGraph& graph) {
+    // Rebuild index one last time to ensure it's current
+    idx.rebuild(graph);
+
+    for (auto& node : graph.nodes) {
+        node.resolved_lambdas.clear();
+        node.resolved_fn_type = nullptr;
+        node.needs_narrowing_cast = false;
+
+        // 1. Pre-compute lambda roots for nodes with Lambda-direction input pins
+        for (auto& inp : node.inputs) {
+            if (inp->direction != FlowPin::Lambda) continue;
+            FlowNode::ResolvedLambda rl;
+            rl.root = idx.source_node(inp.get());
+            if (rl.root) {
+                std::set<std::string> visited;
+                collect_lambda_params(graph, *rl.root, rl.params, visited);
+            }
+            node.resolved_lambdas.push_back(std::move(rl));
+        }
+
+        // 2. Pre-compute store target function type (for stored lambdas)
+        if (is_any_of(node.type_id, NodeTypeID::Store, NodeTypeID::StoreBang)) {
+            if (!node.parsed_exprs.empty() && node.parsed_exprs[0]) {
+                auto fn_type = node.parsed_exprs[0]->resolved_type;
+                // Resolve Named type aliases
+                while (fn_type && fn_type->kind == TypeKind::Named) {
+                    auto it = pool.cache.find(fn_type->named_ref);
+                    if (it != pool.cache.end() && it->second.get() != fn_type.get())
+                        fn_type = it->second;
+                    else break;
+                }
+                if (fn_type && fn_type->kind == TypeKind::Function)
+                    node.resolved_fn_type = fn_type;
+            }
+        }
+
+        // 3. Pre-compute narrowing cast flag for 'new' nodes
+        if (node.type_id == NodeTypeID::New) {
+            for (auto& inp : node.inputs) {
+                if (inp->resolved_type && !inp->resolved_type->is_generic &&
+                    inp->resolved_type->kind == TypeKind::Scalar) {
+                    auto* src_node = idx.source_node(inp.get());
+                    if (src_node && !src_node->outputs.empty() &&
+                        src_node->outputs[0]->resolved_type &&
+                        src_node->outputs[0]->resolved_type->is_generic) {
+                        node.needs_narrowing_cast = true;
+                        break;
+                    }
+                }
+            }
+        }
     }
 }

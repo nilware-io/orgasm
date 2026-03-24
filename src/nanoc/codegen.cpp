@@ -98,17 +98,7 @@ void CodeGenerator::emit_stored_lambda(FlowNode& store_node, FlowNode& lambda_ro
     std::string ind = indent_str(indent);
 
     // Determine function type from the target variable's type
-    TypePtr fn_type;
-    if (!store_node.parsed_exprs.empty() && store_node.parsed_exprs[0]) {
-        fn_type = store_node.parsed_exprs[0]->resolved_type;
-        // Resolve named type aliases
-        while (fn_type && fn_type->kind == TypeKind::Named) {
-            auto it = pool.cache.find(fn_type->named_ref);
-            if (it != pool.cache.end() && it->second.get() != fn_type.get())
-                fn_type = it->second;
-            else break;
-        }
-    }
+    TypePtr fn_type = store_node.resolved_fn_type;
     if (!fn_type || fn_type->kind != TypeKind::Function) {
         out << ind << "// WARNING: could not determine function type for stored lambda\n";
         return;
@@ -714,13 +704,8 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
         out << indent_str(indent+1) << "std::lock_guard<std::mutex> " << lock_var << "(" << mutex_var << ");\n";
 
         // Find and emit lambda body
-        FlowNode* lambda_root = nullptr;
-        for (auto& inp : node.inputs) {
-            if (inp->direction == FlowPin::Lambda) {
-                auto* src = find_source_node(inp->id);
-                if (src) lambda_root = src;
-            }
-        }
+        FlowNode* lambda_root = (!node.resolved_lambdas.empty() && node.resolved_lambdas[0].root)
+            ? node.resolved_lambdas[0].root : nullptr;
 
         if (lambda_root) {
             // Forward lock's extra input pins (argN) to the inner lambda's params
@@ -1140,13 +1125,8 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
             << it_var << " != " << collection << ".end(); ) {\n";
 
         // Find lambda root
-        FlowNode* lambda_root = nullptr;
-        for (auto& inp : node.inputs) {
-            if (inp->direction == FlowPin::Lambda) {
-                auto* src = find_source_node(inp->id);
-                if (src) lambda_root = src;
-            }
-        }
+        FlowNode* lambda_root = (!node.resolved_lambdas.empty() && node.resolved_lambdas[0].root)
+            ? node.resolved_lambdas[0].root : nullptr;
 
         if (lambda_root) {
             std::set<std::string> visited_lambda;
@@ -1708,13 +1688,8 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
             << it_var << " != " << collection << ".end(); ) {\n";
 
         // Find the lambda root (connected to the fn/@0 pin)
-        FlowNode* lambda_root = nullptr;
-        for (auto& inp : node.inputs) {
-            if (inp->direction == FlowPin::Lambda) {
-                auto* src = find_source_node(inp->id);
-                if (src) lambda_root = src;
-            }
-        }
+        FlowNode* lambda_root = (!node.resolved_lambdas.empty() && node.resolved_lambdas[0].root)
+            ? node.resolved_lambdas[0].root : nullptr;
 
         if (lambda_root) {
             // Find all unconnected inputs in the lambda subgraph
@@ -1781,13 +1756,8 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
         std::string lock_var = fresh_var("lock_guard");
 
         // Find the lambda root first to determine return type
-        FlowNode* lambda_root = nullptr;
-        for (auto& inp : node.inputs) {
-            if (inp->direction == FlowPin::Lambda) {
-                auto* src = find_source_node(inp->id);
-                if (src) lambda_root = src;
-            }
-        }
+        FlowNode* lambda_root = (!node.resolved_lambdas.empty() && node.resolved_lambdas[0].root)
+            ? node.resolved_lambdas[0].root : nullptr;
 
         // Determine if lambda returns a value
         bool has_return = !node.outputs.empty();
