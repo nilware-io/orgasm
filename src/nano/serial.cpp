@@ -392,6 +392,7 @@ void save_nano_stream(std::ostream& f, const FlowGraph& graph) {
             bool from_this = false;
             for (auto& p : node.outputs) if (p->id == link.from_pin) from_this = true;
             for (auto& p : node.nexts) if (p->id == link.from_pin) from_this = true;
+            for (auto& p : node.triggers) if (p->id == link.from_pin) from_this = true;
             if (node.lambda_grab.id == link.from_pin) from_this = true;
             if (node.bang_pin.id == link.from_pin) from_this = true;
             if (!from_this) continue;

@@ -4428,6 +4428,117 @@ TEST(shadow_store_two_pin_refs_in_value) {
 }
 
 // ============================================================
+// Connection direction tests
+// ============================================================
+
+TEST(connect_decl_local_out_to_store_value) {
+    // decl_local mixs f32 → store! $audio_tick
+    // decl_local.out0 (Output, &f32) → store!.value (Input)
+    GraphBuilder gb;
+    gb.add("dv_at", "decl_var", "audio_tick () -> void");
+    gb.add("dl", "decl_local", "mixs f32");
+    gb.add("st", "store!", "$audio_tick");
+
+    // Verify store! has a "value" input pin
+    auto* st = gb.find("st");
+    ASSERT(st != nullptr);
+    bool has_value_pin = false;
+    for (auto& p : st->inputs) {
+        if (p->name == "value") { has_value_pin = true; break; }
+    }
+    ASSERT(has_value_pin);
+
+    // Verify decl_local has an output
+    auto* dl = gb.find("dl");
+    ASSERT(dl != nullptr);
+    ASSERT(!dl->outputs.empty());
+
+    // Connect decl_local.out0 → store!.value
+    gb.link("dl.out0", "st.value");
+
+    // Run inference — should have no errors on the store
+    auto errors = gb.run_inference();
+    for (auto& e : errors) printf("    ERR: %s\n", e.c_str());
+
+    st = gb.find("st");
+    ASSERT(st != nullptr);
+    // store! target is $audio_tick (()->void), value is &f32 — type mismatch is expected
+    // but the LINK should exist and the store itself should not have a structural error
+    // (the type mismatch is on the store's type check, not on the link)
+
+    // Verify the link exists
+    bool link_exists = false;
+    for (auto& l : gb.graph.links) {
+        if (l.from_pin == "dl.out0" && l.to_pin == "st.value") {
+            link_exists = true;
+            break;
+        }
+    }
+    ASSERT(link_exists);
+}
+
+TEST(connect_store_bang_to_decl_local_trigger) {
+    // store!.bang0 (BangNext) → decl_local.bang_in0 (BangTrigger)
+    // This is the standard bang chain connection
+    GraphBuilder gb;
+    gb.add("dv", "decl_var", "x f32");
+    gb.add("st", "store!", "$x 42");
+    gb.add("dl", "decl_local", "y f32");
+
+    // store! has nexts (bang outputs), decl_local has triggers (bang inputs)
+    auto* st = gb.find("st");
+    ASSERT(st != nullptr);
+    ASSERT(!st->nexts.empty());
+
+    auto* dl = gb.find("dl");
+    ASSERT(dl != nullptr);
+    ASSERT(!dl->triggers.empty());
+
+    // Connect store!.bang0 → decl_local.bang_in0
+    std::string from_pin = st->nexts[0]->id;
+    std::string to_pin = dl->triggers[0]->id;
+    gb.link(from_pin, to_pin);
+
+    // Verify link exists
+    bool link_exists = false;
+    for (auto& l : gb.graph.links) {
+        if (l.from_pin == from_pin && l.to_pin == to_pin) {
+            link_exists = true;
+            break;
+        }
+    }
+    ASSERT(link_exists);
+
+    // Verify pin directions
+    ASSERT_EQ((int)st->nexts[0]->direction, (int)FlowPin::BangNext);
+    ASSERT_EQ((int)dl->triggers[0]->direction, (int)FlowPin::BangTrigger);
+}
+
+TEST(connect_bang_trigger_as_value_source) {
+    // decl_local.bang_in0 (BangTrigger) → store!.value (Input)
+    // BangTrigger outputs () -> void, store saves it into a variable
+    GraphBuilder gb;
+    gb.add("dv_at", "decl_var", "audio_tick () -> void");
+    gb.add("dl", "decl_local", "mixs f32");
+    gb.add("st", "store!", "$audio_tick");
+
+    // Connect decl_local's BangTrigger to store's value pin
+    std::string trigger_pin = gb.find("dl")->triggers[0]->id;
+    std::string value_pin;
+    for (auto& p : gb.find("st")->inputs)
+        if (p->name == "value") { value_pin = p->id; break; }
+    ASSERT(!value_pin.empty());
+
+    gb.link(trigger_pin, value_pin);
+
+    // Verify link direction: BangTrigger → Input
+    bool link_exists = false;
+    for (auto& l : gb.graph.links)
+        if (l.from_pin == trigger_pin && l.to_pin == value_pin) { link_exists = true; break; }
+    ASSERT(link_exists);
+}
+
+// ============================================================
 // Main
 // ============================================================
 
