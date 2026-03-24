@@ -40,6 +40,7 @@ enum class NodeTypeID : uint8_t {
     ResizeBang,     // 33
     Cast,           // 34
     Label,          // 35
+    Deref,          // 36 — internal: dereference iterator to value (shadow node only)
     COUNT,
     Unknown = 255
 };
@@ -133,6 +134,7 @@ static const NodeType NODE_TYPES[] = {
     {NodeTypeID::ResizeBang,    "resize!",    "Resize vector",                         1,2, 1,0, false,true, false,false, P_BANG_IN, P_RESIZE_IN, P_BANG_TRIG, nullptr},
     {NodeTypeID::Cast,          "cast",       "Cast value to type",                    0,1, 0,1, false,false,false,false, nullptr, P_VALUE, nullptr, P_RESULT},
     {NodeTypeID::Label,         "label",      "Text label (no connections)",           0,0, 0,0, false,true, false,false, nullptr, nullptr, nullptr, nullptr},
+    {NodeTypeID::Deref,         "deref",      "Dereference iterator (internal)",       0,1, 0,1, false,false,false,false, nullptr, P_VALUE, nullptr, P_RESULT},
 };
 static constexpr int NUM_NODE_TYPES = sizeof(NODE_TYPES) / sizeof(NODE_TYPES[0]);
 

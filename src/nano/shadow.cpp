@@ -3,17 +3,16 @@
 #include "expr.h"
 #include "node_types.h"
 #include <set>
+#include <map>
 
-// Nodes whose args are NOT expressions — skip shadow generation
 static bool skip_shadow(NodeTypeID id) {
     return is_any_of(id,
         NodeTypeID::DeclType, NodeTypeID::DeclVar, NodeTypeID::DeclLocal,
         NodeTypeID::DeclEvent, NodeTypeID::DeclImport, NodeTypeID::Ffi,
         NodeTypeID::New, NodeTypeID::EventBang, NodeTypeID::Cast,
-        NodeTypeID::Label,
-        // Expr nodes already ARE expressions
+        NodeTypeID::Label, NodeTypeID::Deref,
         NodeTypeID::Expr, NodeTypeID::ExprBang,
-        // Nodes with no meaningful inline args
+        NodeTypeID::Call, NodeTypeID::CallBang,
         NodeTypeID::Dup, NodeTypeID::Str, NodeTypeID::Void, NodeTypeID::Discard,
         NodeTypeID::DiscardBang, NodeTypeID::Next,
         NodeTypeID::OnKeyDownBang, NodeTypeID::OnKeyUpBang,
@@ -21,178 +20,269 @@ static bool skip_shadow(NodeTypeID id) {
 }
 
 void generate_shadow_nodes(FlowGraph& graph) {
-    // Phase 1: Collect shadow generation tasks (don't modify graph yet)
-    struct ShadowTask {
-        std::string parent_guid;
-        NodeTypeID parent_type_id;
-        Vec2 parent_pos;
-        std::vector<std::string> arg_tokens;
-        bool is_call;
+    //
+    // After serial loading, a non-expr node with inline args has:
+    //   args = "token0 token1 ..."
+    //   inputs = [$N ref pins from inline args] ++ [remaining descriptor pins]
+    //
+    // compute_inline_args tells us:
+    //   num_inline_args: how many tokens fill descriptor inputs
+    //   pin_slots: which $N/@N refs appear in the tokens
+    //   remaining_descriptor_inputs: descriptor inputs beyond the inline count
+    //
+    // The shadow pass creates one shadow expr node per inline arg token, wires
+    // its output to a NEW descriptor-named pin on the parent, and re-routes
+    // any $N connections from the parent to the shadow.
+    //
+    // After the pass:
+    //   - Parent args are cleared
+    //   - Parent inputs = [descriptor pins for inline-arg positions (connected from shadows)]
+    //                    ++ [remaining descriptor pins (unchanged, keep their connections)]
+    //   - $N ref pins are removed from parent
+    //
+
+    struct Task {
+        std::string guid;
+        NodeTypeID type_id;
+        Vec2 pos;
+        std::vector<std::string> tokens;
+        int num_inline_args;
+        int descriptor_inputs;
+        std::map<std::string, std::string> ref_sources;
+        int first_shadow_arg; // args before this index are lvalues — keep as inline
     };
-    std::vector<ShadowTask> tasks;
+
+    std::vector<Task> tasks;
 
     for (auto& node : graph.nodes) {
         if (node.shadow || node.args.empty()) continue;
         if (skip_shadow(node.type_id)) continue;
 
+        // Skip nodes used as lambda roots — their inline args are part of the
+        // lambda subgraph and shadow nodes would cross lambda boundaries
+        bool is_lambda_root = false;
+        for (auto& link : graph.links) {
+            if (link.from_pin == node.lambda_grab.id) { is_lambda_root = true; break; }
+        }
+        if (is_lambda_root) continue;
+
         auto* nt = find_node_type(node.type_id);
         if (!nt) continue;
 
-        bool is_call = is_any_of(node.type_id, NodeTypeID::Call, NodeTypeID::CallBang);
-        auto tokens = tokenize_args(node.args, false);
-        int first_arg = is_call ? 1 : 0;
-        if ((int)tokens.size() <= first_arg) continue;
+        int di = nt->inputs;
+        auto info = compute_inline_args(node.args, di);
+        if (info.num_inline_args == 0) continue;
 
-        std::vector<std::string> arg_tokens(tokens.begin() + first_arg, tokens.end());
-        tasks.push_back({node.guid, node.type_id, node.position, std::move(arg_tokens), is_call});
-    }
-
-    // Phase 2: Create shadow nodes and links (collected, then applied)
-    struct PendingNode { FlowNode node; };
-    struct PendingLink { std::string from_pin; std::string to_pin; };
-    std::vector<PendingNode> pending_nodes;
-    std::vector<PendingLink> pending_links;
-
-    // Modifications to parent nodes
-    struct ParentMod {
-        std::string guid;
-        std::string new_args;            // cleared or fn-ref only
-        PinVec new_inputs;               // rebuilt inputs (descriptor pins only)
-    };
-    std::vector<ParentMod> parent_mods;
-
-    for (auto& task : tasks) {
-        auto* nt = find_node_type(task.parent_type_id);
-        if (!nt) continue;
-
-        ParentMod mod;
-        mod.guid = task.parent_guid;
-
-        // For call nodes, keep the function ref; for others, clear args
-        if (task.is_call) {
-            // Find the original first token (fn ref)
-            FlowNode* parent = nullptr;
-            for (auto& n : graph.nodes) if (n.guid == task.parent_guid) { parent = &n; break; }
-            if (!parent) continue;
-            auto all_tokens = tokenize_args(parent->args, false);
-            mod.new_args = all_tokens.empty() ? "" : all_tokens[0];
+        // Determine which inline arg positions are lvalue targets (cannot be shadowed)
+        // These stay as inline args on the parent node
+        int first_shadow_arg = 0;
+        if (is_any_of(node.type_id, NodeTypeID::Store, NodeTypeID::StoreBang,
+                       NodeTypeID::ResizeBang, NodeTypeID::Append, NodeTypeID::AppendBang,
+                       NodeTypeID::Erase, NodeTypeID::EraseBang,
+                       NodeTypeID::Lock, NodeTypeID::LockBang,
+                       NodeTypeID::Iterate, NodeTypeID::IterateBang)) {
+            first_shadow_arg = 1; // first arg is lvalue/reference target, skip it
         }
 
-        // Create shadow nodes
-        for (int ti = 0; ti < (int)task.arg_tokens.size(); ti++) {
-            auto& tok = task.arg_tokens[ti];
+        if (info.num_inline_args <= first_shadow_arg) continue;
+
+        auto tokens = tokenize_args(node.args, false);
+
+        // Collect $N ref pin → source link
+        std::map<std::string, std::string> ref_sources;
+        for (auto& p : node.inputs) {
+            if (p->name.empty()) continue;
+            char c = p->name[0];
+            if (!((c >= '0' && c <= '9') || c == '@')) continue;
+            for (auto& link : graph.links) {
+                if (link.to_pin == p->id) {
+                    ref_sources[p->name] = link.from_pin;
+                    break;
+                }
+            }
+        }
+
+        tasks.push_back({node.guid, node.type_id, node.position,
+                         std::move(tokens), info.num_inline_args, di,
+                         std::move(ref_sources), first_shadow_arg});
+    }
+
+    if (tasks.empty()) return;
+
+    // Collect pending operations
+    std::vector<FlowNode> pending_nodes;
+    struct Link { std::string from, to; };
+    std::vector<Link> pending_links;
+
+    struct Mod {
+        std::string guid;
+        std::set<std::string> remove_pin_ids;
+        struct NewPin { std::string name; FlowPin::Direction dir; };
+        std::vector<NewPin> insert_pins;
+        int first_shadow_arg = 0;  // args before this are lvalues kept in node.args
+        std::vector<std::string> kept_tokens; // lvalue tokens to preserve
+
+        Mod() = default;
+        Mod(Mod&&) = default;
+        Mod& operator=(Mod&&) = default;
+    };
+    std::vector<Mod> mods;
+
+    for (auto& task : tasks) {
+        auto* nt = find_node_type(task.type_id);
+        if (!nt) continue;
+
+        Mod mod;
+        mod.guid = task.guid;
+        mod.first_shadow_arg = task.first_shadow_arg;
+        // Keep lvalue tokens
+        for (int ai = 0; ai < task.first_shadow_arg && ai < (int)task.tokens.size(); ai++)
+            mod.kept_tokens.push_back(task.tokens[ai]);
+
+        // Find parent node
+        FlowNode* parent = nullptr;
+        for (auto& n : graph.nodes) if (n.guid == task.guid) { parent = &n; break; }
+        if (!parent) continue;
+
+        // Determine which $N refs are used ONLY in shadowed args (not in lvalue args)
+        // Collect $N refs from lvalue args
+        std::set<std::string> lvalue_refs;
+        for (int ai = 0; ai < task.first_shadow_arg && ai < (int)task.tokens.size(); ai++) {
+            auto slots = scan_slots(task.tokens[ai]);
+            for (auto& [idx, sigil] : slots.slots) {
+                lvalue_refs.insert(sigil == '@' ? ("@" + std::to_string(idx)) : std::to_string(idx));
+            }
+        }
+
+        // Mark $N ref pins for removal — only if NOT used in lvalue args
+        for (auto& p : parent->inputs) {
+            if (p->name.empty()) continue;
+            char c = p->name[0];
+            if ((c >= '0' && c <= '9') || c == '@') {
+                if (lvalue_refs.count(p->name) == 0) {
+                    mod.remove_pin_ids.insert(p->id);
+                }
+            }
+        }
+
+        // Create shadow expr for each inline arg token (skip lvalue args)
+        for (int ti = task.first_shadow_arg; ti < task.num_inline_args; ti++) {
+            auto& tok = task.tokens[ti];
 
             FlowNode shadow;
             shadow.id = graph.next_node_id();
-            shadow.guid = task.parent_guid + "_s" + std::to_string(ti);
+            shadow.guid = task.guid + "_s" + std::to_string(ti);
             shadow.type_id = NodeTypeID::Expr;
             shadow.args = tok;
-            shadow.position = {task.parent_pos.x - 150, task.parent_pos.y - 50.0f * ti};
+            shadow.position = {task.pos.x - 200, task.pos.y - 60.0f * ti};
             shadow.shadow = true;
 
-            // Input pins from $N refs
+            // Create shadow input pins from $N/@N refs in this token
             auto slots = scan_slots(tok);
             int pin_count = slots.total_pin_count(0);
             for (int pi = 0; pi < pin_count; pi++) {
-                bool is_lambda = slots.is_lambda_slot(pi);
-                std::string pname = is_lambda ? ("@" + std::to_string(pi)) : std::to_string(pi);
-                shadow.inputs.push_back(make_pin("", pname, "", nullptr,
-                    is_lambda ? FlowPin::Lambda : FlowPin::Input));
+                bool is_lam = slots.is_lambda_slot(pi);
+                std::string pn = is_lam ? ("@" + std::to_string(pi)) : std::to_string(pi);
+                shadow.inputs.push_back(make_pin("", pn, "", nullptr,
+                    is_lam ? FlowPin::Lambda : FlowPin::Input));
             }
 
             // One output
             shadow.outputs.push_back(make_pin("", "out0", "", nullptr, FlowPin::Output));
             shadow.rebuild_pin_ids();
 
-            // Determine target pin name on parent
-            std::string target_pin_name;
-            if (nt->input_ports && ti < nt->inputs) {
-                target_pin_name = nt->input_ports[ti].name;
-            } else {
-                target_pin_name = std::to_string(ti);
-            }
-
-            // Ensure parent has this input pin
-            // (built in new_inputs below)
-
-            // Wire shadow output → parent input
-            std::string from_id = shadow.guid + ".out0";
-            std::string to_id = task.parent_guid + "." + target_pin_name;
-            pending_links.push_back({from_id, to_id});
-
-            // Re-route $N connections: if the parent had input pins for $N refs,
-            // and those pins had incoming links, wire them to the shadow instead
+            // Wire shadow's $N inputs from parent's $N sources
             for (int pi = 0; pi < pin_count; pi++) {
-                std::string parent_pin_id = task.parent_guid + "." + std::to_string(pi);
-                std::string shadow_pin_name = slots.is_lambda_slot(pi)
+                std::string pn = slots.is_lambda_slot(pi)
                     ? ("@" + std::to_string(pi)) : std::to_string(pi);
-                std::string shadow_pin_id = shadow.guid + "." + shadow_pin_name;
-
-                for (auto& link : graph.links) {
-                    if (link.to_pin == parent_pin_id) {
-                        pending_links.push_back({link.from_pin, shadow_pin_id});
-                    }
+                auto it = task.ref_sources.find(pn);
+                if (it != task.ref_sources.end()) {
+                    pending_links.push_back({it->second, shadow.guid + "." + pn});
                 }
             }
 
-            pending_nodes.push_back({std::move(shadow)});
-        }
-
-        // Build new parent inputs: descriptor pins for shadow outputs to connect to
-        for (int ti = 0; ti < (int)task.arg_tokens.size(); ti++) {
-            std::string pin_name;
+            // Determine descriptor pin name for this inline arg position
+            std::string desc_name;
             if (nt->input_ports && ti < nt->inputs) {
-                pin_name = nt->input_ports[ti].name;
+                desc_name = nt->input_ports[ti].name;
             } else {
-                pin_name = std::to_string(ti);
+                desc_name = "arg" + std::to_string(ti);
             }
-            mod.new_inputs.push_back(make_pin("", pin_name, "", nullptr, FlowPin::Input));
+
+            // Wire shadow output → new parent descriptor pin
+            pending_links.push_back({shadow.guid + ".out0", task.guid + "." + desc_name});
+
+            // Record that we need this pin on the parent
+            bool is_lam = nt->input_ports && (nt->input_ports[ti].kind == PortKind::Lambda);
+            mod.insert_pins.push_back({desc_name, is_lam ? FlowPin::Lambda : FlowPin::Input});
+
+            pending_nodes.push_back(std::move(shadow));
         }
 
-        parent_mods.push_back(std::move(mod));
+        mods.push_back(std::move(mod));
     }
 
-    // Phase 3: Apply modifications
-    for (auto& mod : parent_mods) {
+    // Apply modifications
+    for (auto& mod : mods) {
+        // Remove links TO $N ref pins
+        std::erase_if(graph.links, [&](auto& l) {
+            return mod.remove_pin_ids.count(l.to_pin) > 0;
+        });
+
         for (auto& node : graph.nodes) {
             if (node.guid != mod.guid) continue;
 
-            // Remove old links to $N ref pins (they're being replaced)
-            for (auto& p : node.inputs) {
-                if (p->name.empty()) continue;
-                char c = p->name[0];
-                if (c >= '0' && c <= '9') {
-                    std::erase_if(graph.links, [&](auto& l) { return l.to_pin == p->id; });
+            // Remove $N ref pins from inputs
+            std::erase_if(node.inputs, [&](auto& p) {
+                return mod.remove_pin_ids.count(p->id) > 0;
+            });
+
+            // Rebuild inputs: existing pins first (preserving $N ref indexing),
+            // then new descriptor pins for shadow connections at the end
+            PinVec new_inputs;
+            for (auto& p : node.inputs)
+                new_inputs.push_back(std::move(p));
+            for (auto& np : mod.insert_pins) {
+                bool found = false;
+                for (auto& p : new_inputs) {
+                    if (p->name == np.name) { found = true; break; }
+                }
+                if (!found) {
+                    new_inputs.push_back(make_pin("", np.name, "", nullptr, np.dir));
                 }
             }
 
-            node.args = mod.new_args;
-            node.inputs = std::move(mod.new_inputs);
+            node.inputs = std::move(new_inputs);
+            // Keep only lvalue tokens in args
+            std::string kept;
+            for (auto& t : mod.kept_tokens) {
+                if (!kept.empty()) kept += " ";
+                kept += t;
+            }
+            node.args = kept;
             node.rebuild_pin_ids();
             break;
         }
     }
 
-    for (auto& pn : pending_nodes) {
-        graph.nodes.push_back(std::move(pn.node));
+    for (auto& n : pending_nodes)
+        graph.nodes.push_back(std::move(n));
+    for (auto& l : pending_links) {
+        graph.add_link(l.from, l.to);
     }
 
-    for (auto& pl : pending_links) {
-        graph.add_link(pl.from_pin, pl.to_pin);
-    }
 }
 
 void remove_shadow_nodes(FlowGraph& graph) {
     std::set<std::string> shadow_guids;
-    for (auto& node : graph.nodes) {
-        if (node.shadow) shadow_guids.insert(node.guid);
-    }
+    for (auto& n : graph.nodes)
+        if (n.shadow) shadow_guids.insert(n.guid);
 
     std::erase_if(graph.links, [&](auto& l) {
-        auto dot1 = l.from_pin.find('.');
-        auto dot2 = l.to_pin.find('.');
-        if (dot1 != std::string::npos && shadow_guids.count(l.from_pin.substr(0, dot1))) return true;
-        if (dot2 != std::string::npos && shadow_guids.count(l.to_pin.substr(0, dot2))) return true;
+        auto d1 = l.from_pin.find('.');
+        auto d2 = l.to_pin.find('.');
+        if (d1 != std::string::npos && shadow_guids.count(l.from_pin.substr(0, d1))) return true;
+        if (d2 != std::string::npos && shadow_guids.count(l.to_pin.substr(0, d2))) return true;
         return false;
     });
 

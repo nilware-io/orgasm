@@ -37,7 +37,15 @@ std::vector<std::string> GraphInference::run(FlowGraph& graph) {
         if (!changed) break;
     }
 
-    // Phase 6: Pre-compute resolved data for codegen
+    // Phase 6: Post-inference fixup — insert Deref nodes in expressions where
+    // iterator args are passed to non-iterator params (may have been missed during
+    // the fixed-point loop if types weren't resolved yet)
+    fixup_expr_derefs(graph);
+
+    // Phase 6b: Insert deref shadow nodes where iterators flow into non-iterator pins
+    insert_deref_nodes(graph);
+
+    // Phase 7: Pre-compute resolved data for codegen
     precompute_resolved_data(graph);
 
     // Phase 7: Check link type compatibility
@@ -1169,6 +1177,182 @@ void GraphInference::validate_lambda(FlowNode& node, const std::vector<FlowPin*>
         link.error = "Lambda return type mismatch: " +
             type_to_string(lambda_type->return_type) + " vs expected " +
             type_to_string(expected->return_type);
+    }
+}
+
+// Recursively walk an expression tree and insert Deref nodes where an iterator
+// is passed as a function argument but the param expects a non-iterator.
+static void fixup_derefs_in_expr(const ExprPtr& expr, TypePool& pool) {
+    if (!expr) return;
+
+    // Recurse into children first (bottom-up)
+    for (auto& child : expr->children)
+        fixup_derefs_in_expr(child, pool);
+
+    if (expr->kind != ExprKind::FuncCall) return;
+    if (expr->children.empty()) return;
+
+    // Determine function type from callee
+    auto callee_type = expr->children[0]->resolved_type;
+    // Resolve through named types
+    while (callee_type && callee_type->kind == TypeKind::Named) {
+        auto it = pool.cache.find(callee_type->named_ref);
+        if (it != pool.cache.end() && it->second.get() != callee_type.get())
+            callee_type = it->second;
+        else break;
+    }
+    if (!callee_type || callee_type->kind != TypeKind::Function) return;
+
+    size_t expected_args = callee_type->func_args.size();
+    size_t actual_args = expr->children.size() - 1;
+
+    for (size_t i = 0; i < std::min(actual_args, expected_args); i++) {
+        auto& arg = expr->children[i + 1];
+        if (!arg || !arg->resolved_type) continue;
+        if (arg->kind == ExprKind::Deref) continue;
+
+        if (arg->resolved_type->kind == TypeKind::ContainerIterator) {
+            auto& param_type = callee_type->func_args[i].type;
+            if (param_type && param_type->kind != TypeKind::ContainerIterator) {
+                // Wrap in Deref
+                auto deref = std::make_shared<ExprNode>();
+                deref->kind = ExprKind::Deref;
+                deref->children.push_back(arg);
+                deref->resolved_type = arg->resolved_type->value_type;
+                deref->access = ValueAccess::Value;
+                arg = deref;
+            }
+        }
+    }
+}
+
+void GraphInference::fixup_expr_derefs(FlowGraph& graph) {
+    for (auto& node : graph.nodes) {
+        // Fix derefs inside expressions (e.g. $obj.method($iter_arg))
+        for (auto& expr : node.parsed_exprs) {
+            fixup_derefs_in_expr(expr, pool);
+        }
+
+        // Fix derefs for call/call! inline args where the arg is an iterator
+        // but the function param expects a non-iterator
+        if (!is_any_of(node.type_id, NodeTypeID::Call, NodeTypeID::CallBang)) continue;
+        if (node.parsed_exprs.size() < 2) continue;
+
+        // First parsed_expr is the function ref — resolve its type through named aliases
+        auto fn_type = node.parsed_exprs[0] ? node.parsed_exprs[0]->resolved_type : nullptr;
+        while (fn_type && fn_type->kind == TypeKind::Named) {
+            // Check both pool.cache and registry.parsed for named type resolution
+            auto it = pool.cache.find(fn_type->named_ref);
+            if (it != pool.cache.end() && it->second.get() != fn_type.get()) {
+                fn_type = it->second;
+            } else {
+                auto rit = registry.parsed.find(fn_type->named_ref);
+                if (rit != registry.parsed.end() && rit->second.get() != fn_type.get())
+                    fn_type = rit->second;
+                else break;
+            }
+        }
+        if (!fn_type || fn_type->kind != TypeKind::Function) continue;
+
+        // Check each arg (parsed_exprs[1..]) against fn params
+        for (size_t i = 1; i < node.parsed_exprs.size() && (i - 1) < fn_type->func_args.size(); i++) {
+            auto& arg_expr = node.parsed_exprs[i];
+            if (!arg_expr || !arg_expr->resolved_type) continue;
+            if (arg_expr->kind == ExprKind::Deref) continue; // already wrapped
+
+            if (arg_expr->resolved_type->kind == TypeKind::ContainerIterator) {
+                auto& param_type = fn_type->func_args[i - 1].type;
+                if (param_type && param_type->kind != TypeKind::ContainerIterator) {
+                    auto deref = std::make_shared<ExprNode>();
+                    deref->kind = ExprKind::Deref;
+                    deref->children.push_back(arg_expr);
+                    deref->resolved_type = arg_expr->resolved_type->value_type;
+                    deref->access = ValueAccess::Value;
+                    arg_expr = deref;
+                }
+            }
+        }
+    }
+}
+
+void GraphInference::insert_deref_nodes(FlowGraph& graph) {
+    idx.rebuild(graph);
+
+    // Collect links that need a deref node inserted
+    struct DerefTask {
+        std::string from_pin_id;  // source output pin (iterator type)
+        std::string to_pin_id;    // target input pin (expects value/ref)
+        std::string from_guid;    // source node guid (for positioning)
+        TypePtr elem_type;        // the dereferenced element type
+    };
+    std::vector<DerefTask> tasks;
+
+    for (auto& link : graph.links) {
+        if (!link.from || !link.to) continue;
+        if (!link.from->resolved_type || !link.to->resolved_type) continue;
+
+        auto from_t = link.from->resolved_type;
+        auto to_t = link.to->resolved_type;
+
+        // Skip if source is not an iterator
+        if (from_t->kind != TypeKind::ContainerIterator) continue;
+        // Skip if target also expects an iterator
+        if (to_t->kind == TypeKind::ContainerIterator) continue;
+        // Skip if target is generic/unknown (let it resolve naturally)
+        if (to_t->is_generic) continue;
+
+        // Extract element type from the iterator
+        TypePtr elem_type = from_t->value_type;
+
+        // Get source node guid for positioning
+        std::string from_guid;
+        if (link.from_node) from_guid = link.from_node->guid;
+
+        tasks.push_back({link.from_pin, link.to_pin, from_guid, elem_type});
+    }
+
+    if (tasks.empty()) return;
+
+    // Apply: for each task, create a deref node and rewire
+    for (auto& task : tasks) {
+        // Remove old link
+        std::erase_if(graph.links, [&](auto& l) {
+            return l.from_pin == task.from_pin_id && l.to_pin == task.to_pin_id;
+        });
+
+        // Create deref shadow node
+        FlowNode deref;
+        deref.id = graph.next_node_id();
+        deref.guid = task.from_guid + "_deref_" + std::to_string(deref.id);
+        deref.type_id = NodeTypeID::Deref;
+        deref.shadow = true;
+
+        // Position near source
+        for (auto& n : graph.nodes) {
+            if (n.guid == task.from_guid) {
+                deref.position = {n.position.x + 50, n.position.y + 30};
+                break;
+            }
+        }
+
+        // Input: iterator
+        deref.inputs.push_back(make_pin("", "value", "", nullptr, FlowPin::Input));
+        // Output: dereferenced value
+        deref.outputs.push_back(make_pin("", "out0", "", nullptr, FlowPin::Output));
+        deref.rebuild_pin_ids();
+
+        // Set resolved types
+        deref.inputs[0]->resolved_type = task.elem_type; // input receives iterator (but we set elem for downstream)
+        if (task.elem_type)
+            deref.outputs[0]->resolved_type = task.elem_type;
+
+        // Wire: source → deref.value, deref.out0 → target
+        std::string deref_in = deref.pin_id("value");
+        std::string deref_out = deref.pin_id("out0");
+
+        graph.nodes.push_back(std::move(deref));
+        graph.add_link(task.from_pin_id, deref_in);
+        graph.add_link(deref_out, task.to_pin_id);
     }
 }
 

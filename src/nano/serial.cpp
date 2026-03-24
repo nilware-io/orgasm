@@ -1,4 +1,5 @@
 #include "serial.h"
+#include "shadow.h"
 #include "args.h"
 #include "expr.h"
 #include "node_types.h"
@@ -343,6 +344,8 @@ bool load_nano(const std::string& path, FlowGraph& graph) {
         graph.add_link(from_id, to_id);
     }
 
+    generate_shadow_nodes(graph);
+
     printf("Loaded %zu nodes, %zu links from %s\n", own_node_count, graph.links.size(), path.c_str());
     return true;
 }
@@ -596,5 +599,6 @@ bool load_nano_string(const std::string& data, FlowGraph& graph) {
         if (arrow == std::string::npos) continue;
         graph.add_link(pc.target.substr(0,arrow), pc.target.substr(arrow+2));
     }
+    generate_shadow_nodes(graph);
     return true;
 }

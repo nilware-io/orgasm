@@ -1,6 +1,7 @@
 #include "inference.h"
 #include "serial.h"
 #include "type_utils.h"
+#include "shadow.h"
 #include <cstdio>
 #include <cstdlib>
 #include <sstream>
@@ -149,6 +150,14 @@ struct GraphBuilder {
     std::vector<std::string> run_inference() {
         // Resolve type-based pins first (for new/event! nodes)
         resolve_type_based_pins(graph);
+        GraphInference inference(pool);
+        return inference.run(graph);
+    }
+
+    std::vector<std::string> run_full_pipeline() {
+        // Full pipeline: resolve pins → generate shadows → inference
+        resolve_type_based_pins(graph);
+        generate_shadow_nodes(graph);
         GraphInference inference(pool);
         return inference.run(graph);
     }
@@ -4142,6 +4151,40 @@ TEST(pop_style_var_ffi_parses) {
 }
 
 // ============================================================
+// Iterator deref in method calls
+// ============================================================
+
+TEST(iterator_method_call_arg_gets_auto_deref) {
+    // $keys[$0].stop($keys[$0]) — inference should insert a Deref node
+    // wrapping the iterator argument so it becomes a value type
+    GraphBuilder gb;
+    gb.add("dt_osc_res", "decl_type", "osc_res s:f32 e:bool");
+    gb.add("dt_gen_fn", "decl_type", "gen_fn (osc:&osc_def) -> osc_res");
+    gb.add("dt_stop_fn", "decl_type", "stop_fn (osc:&osc_def) -> void");
+    gb.add("dt_osc_def", "decl_type", "osc_def gen:gen_fn stop:stop_fn p:f32 pstep:f32 a:f32 astep:f32");
+    gb.add("dt_key_set", "decl_type", "key_set map<u8, ^list_iterator<osc_def>>");
+    gb.add("dv_keys", "decl_var", "keys key_set");
+    gb.add("e1", "expr", "$keys[$0].stop($keys[$0])");
+    gb.run_inference();
+
+    auto* e1 = gb.find("e1");
+    ASSERT(e1 != nullptr);
+    ASSERT(!e1->parsed_exprs.empty());
+    auto& expr = e1->parsed_exprs[0];
+    ASSERT(expr != nullptr);
+    ASSERT(expr->kind == ExprKind::FuncCall);
+    ASSERT(expr->children.size() >= 2);
+    // children[1] should now be a Deref node wrapping the original iterator arg
+    auto& arg = expr->children[1];
+    ASSERT(arg != nullptr);
+    ASSERT_EQ((int)arg->kind, (int)ExprKind::Deref);
+    // The Deref's child should be the original Index expr with ContainerIterator type
+    ASSERT(!arg->children.empty());
+    ASSERT(arg->children[0]->resolved_type != nullptr);
+    ASSERT_EQ((int)arg->children[0]->resolved_type->kind, (int)TypeKind::ContainerIterator);
+}
+
+// ============================================================
 // select! node (3 bang outputs: next, true, false)
 // ============================================================
 
@@ -4185,10 +4228,8 @@ TEST(select_bang_next_fires_after_branches) {
 // Shadow expr node tests
 // ============================================================
 
-#include "shadow.h"
-
-TEST(shadow_store_generates_two_shadow_nodes) {
-    // store! $my_var.freq rand(200,12000) → 2 shadow expr nodes
+TEST(shadow_store_generates_one_shadow_node) {
+    // store! $my_var.freq rand(200,12000) → 1 shadow for value (target is lvalue, stays inline)
     GraphBuilder gb;
     gb.add("dv", "decl_var", "my_var my_struct");
     gb.add("s1", "store!", "$my_var.freq rand(200,12000)");
@@ -4196,7 +4237,7 @@ TEST(shadow_store_generates_two_shadow_nodes) {
 
     int shadow_count = 0;
     for (auto& n : gb.graph.nodes) if (n.shadow) shadow_count++;
-    ASSERT_EQ(shadow_count, 2);
+    ASSERT_EQ(shadow_count, 1);
 }
 
 TEST(shadow_nodes_are_expr_type) {
@@ -4211,29 +4252,29 @@ TEST(shadow_nodes_are_expr_type) {
     }
 }
 
-TEST(shadow_nodes_have_correct_args) {
+TEST(shadow_value_has_correct_args) {
+    // Only the value arg gets a shadow, not the lvalue target
     GraphBuilder gb;
     gb.add("s1", "store!", "$my_var.freq rand(200,12000)");
     generate_shadow_nodes(gb.graph);
 
-    bool found_freq = false, found_rand = false;
+    bool found_rand = false;
     for (auto& n : gb.graph.nodes) {
         if (!n.shadow) continue;
-        if (n.args == "$my_var.freq") found_freq = true;
         if (n.args == "rand(200,12000)") found_rand = true;
     }
-    ASSERT(found_freq);
     ASSERT(found_rand);
 }
 
-TEST(shadow_parent_args_cleared) {
+TEST(shadow_parent_keeps_lvalue_arg) {
+    // store! keeps the lvalue target token in args
     GraphBuilder gb;
     gb.add("s1", "store!", "$my_var.freq rand(200,12000)");
     generate_shadow_nodes(gb.graph);
 
     auto* s1 = gb.find("s1");
     ASSERT(s1 != nullptr);
-    ASSERT(s1->args.empty());
+    ASSERT_EQ(s1->args, "$my_var.freq");
 }
 
 TEST(shadow_skip_expr_nodes) {
@@ -4258,20 +4299,16 @@ TEST(shadow_skip_decl_nodes) {
     ASSERT_EQ(shadow_count, 0);
 }
 
-TEST(shadow_call_keeps_fn_ref) {
-    // call! $my_func "hello" 42 → keeps $my_func in args, 2 shadows for "hello" and 42
+TEST(shadow_skip_call_nodes) {
+    // call! nodes are skipped — they have complex pin management from resolve_type_based_pins
     GraphBuilder gb;
     gb.add("ffi1", "ffi", R"(my_func (a:string b:s32) -> void)");
     gb.add("c1", "call!", R"($my_func "hello" 42)");
     generate_shadow_nodes(gb.graph);
 
-    auto* c1 = gb.find("c1");
-    ASSERT(c1 != nullptr);
-    ASSERT_EQ(c1->args, "$my_func");
-
     int shadow_count = 0;
     for (auto& n : gb.graph.nodes) if (n.shadow) shadow_count++;
-    ASSERT_EQ(shadow_count, 2);
+    ASSERT_EQ(shadow_count, 0);
 }
 
 TEST(shadow_remove_cleans_up) {
@@ -4285,6 +4322,86 @@ TEST(shadow_remove_cleans_up) {
     int shadow_count = 0;
     for (auto& n : gb.graph.nodes) if (n.shadow) shadow_count++;
     ASSERT_EQ(shadow_count, 0);
+}
+
+// ============================================================
+// Shadow + inference integration tests
+// ============================================================
+
+TEST(shadow_select_condition_resolves) {
+    // select $keys?[$0] — condition should resolve to bool through shadow
+    GraphBuilder gb;
+    gb.add("dt_key_set", "decl_type", "key_set map<u8, s32>");
+    gb.add("dv_keys", "decl_var", "keys key_set");
+    gb.add("e1", "expr", "$0:key");  // provides u8 input
+    gb.add("sel", "select", "$keys?[$0]");
+    gb.link("e1.out0", "sel.0");     // $0 = u8
+
+    // Also provide if_true and if_false
+    gb.add("t1", "expr", "42");
+    gb.add("f1", "expr", "0");
+    gb.link("t1.out0", "sel.if_true");
+    gb.link("f1.out0", "sel.if_false");
+
+    auto errors = gb.run_full_pipeline();
+    for (auto& e : errors) printf("    ERR: %s\n", e.c_str());
+
+    auto* sel = gb.find("sel");
+    ASSERT(sel != nullptr);
+    ASSERT(sel->error.empty());
+}
+
+TEST(shadow_select_as_lambda_param_found) {
+    // select $keys?[$0] used as lock lambda — $0 is a lambda parameter,
+    // must be found through shadow node traversal
+    GraphBuilder gb;
+    gb.add("dt_osc_def", "decl_type", "osc_def p:f32");
+    gb.add("dt_key_set", "decl_type", "key_set map<u8, ^list_iterator<osc_def>>");
+    gb.add("dv_keys", "decl_var", "keys key_set");
+    gb.add("dv_mtx", "decl_var", "mtx mutex");
+
+    // Inside the lock lambda: expr $0:midi_key provides the key
+    gb.add("param_expr", "expr", "$0:midi_key");
+    gb.add("sel", "select", "$keys?[$0]");
+    gb.link("param_expr.out0", "sel.0");   // $0 = midi_key
+
+    gb.add("t1", "expr", "42");
+    gb.add("f1", "expr", "0");
+    gb.link("t1.out0", "sel.if_true");
+    gb.link("f1.out0", "sel.if_false");
+
+    gb.add("lk", "lock", "$mtx");
+    gb.link("sel.as_lambda", "lk.fn");
+
+    auto errors = gb.run_full_pipeline();
+    for (auto& e : errors) printf("    ERR: %s\n", e.c_str());
+
+    auto* sel = gb.find("sel");
+    ASSERT(sel != nullptr);
+    ASSERT(sel->error.empty());
+
+    // Check no lambda param count error on the lock link
+    bool lock_link_error = false;
+    for (auto& l : gb.graph.links) {
+        if (l.to_pin.find("lk") != std::string::npos && !l.error.empty()) {
+            printf("    LINK ERR: %s\n", l.error.c_str());
+            lock_link_error = true;
+        }
+    }
+    ASSERT(!lock_link_error);
+}
+
+TEST(shadow_store_value_type_propagates) {
+    // store! $my_var rand(1,10) — shadow for rand should resolve to int
+    GraphBuilder gb;
+    gb.add("dv", "decl_var", "my_var s32");
+    gb.add("s1", "store!", "$my_var rand(1,10)");
+    auto errors = gb.run_full_pipeline();
+    for (auto& e : errors) printf("    ERR: %s\n", e.c_str());
+
+    auto* s1 = gb.find("s1");
+    ASSERT(s1 != nullptr);
+    ASSERT(s1->error.empty());
 }
 
 // ============================================================

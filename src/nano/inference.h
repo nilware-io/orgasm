@@ -47,6 +47,12 @@ struct GraphInference {
     void validate_lambda(FlowNode& node, const std::vector<FlowPin*>& params,
                          const TypePtr& expected, FlowLink& link);
 
+    // Post-inference: insert ExprKind::Deref in expressions where iterator→non-iterator
+    void fixup_expr_derefs(FlowGraph& graph);
+
+    // Insert shadow deref nodes where iterators flow into non-iterator pins
+    void insert_deref_nodes(FlowGraph& graph);
+
     // Pre-compute resolved data for codegen (lambda roots, fn types, cast flags)
     void precompute_resolved_data(FlowGraph& graph);
 };

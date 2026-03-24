@@ -501,6 +501,7 @@ InlineArgInfo compute_inline_args(const std::string& args, int descriptor_inputs
 void clear_expr_types(const ExprPtr& expr) {
     if (!expr) return;
     expr->resolved_type = nullptr;
+    expr->access = ValueAccess::Value;
     for (auto& child : expr->children)
         clear_expr_types(child);
 }
@@ -563,6 +564,8 @@ std::string expr_to_string(const ExprPtr& e) {
     }
     case ExprKind::Ref:
         return "&" + expr_to_string(e->children[0]);
+    case ExprKind::Deref:
+        return "*" + expr_to_string(e->children[0]);
     }
     return "?";
 }
@@ -823,9 +826,34 @@ TypePtr TypeInferenceContext::infer(const ExprPtr& expr) {
     case ExprKind::Ref:
         result = infer_ref(expr);
         break;
+
+    case ExprKind::Deref:
+        // Deref nodes are inserted by inference — just propagate the child's type
+        if (!expr->children.empty()) result = infer(expr->children[0]);
+        if (result && result->kind == TypeKind::ContainerIterator)
+            result = result->value_type;
+        break;
     }
 
     expr->resolved_type = result ? result : pool.t_unknown;
+
+    // Set access kind based on resolved type
+    if (expr->resolved_type) {
+        switch (expr->resolved_type->kind) {
+        case TypeKind::ContainerIterator:
+            expr->access = ValueAccess::Iterator;
+            break;
+        case TypeKind::Struct:
+        case TypeKind::Named:
+            expr->access = (expr->resolved_type->category == TypeCategory::Reference)
+                ? ValueAccess::Reference : ValueAccess::Field;
+            break;
+        default:
+            expr->access = ValueAccess::Value;
+            break;
+        }
+    }
+
     return expr->resolved_type;
 }
 
@@ -1035,6 +1063,18 @@ TypePtr TypeInferenceContext::infer_func_call(const ExprPtr& expr) {
                         type_to_string(orig_param_type));
                     continue;
                 }
+            }
+
+            // Auto-deref: if arg is an iterator but param expects value/ref, insert Deref
+            if (arg_type->kind == TypeKind::ContainerIterator &&
+                param_type->kind != TypeKind::ContainerIterator) {
+                auto deref = std::make_shared<ExprNode>();
+                deref->kind = ExprKind::Deref;
+                deref->children.push_back(expr->children[i + 1]);
+                deref->resolved_type = arg_type->value_type;
+                deref->access = ValueAccess::Value;
+                expr->children[i + 1] = deref;
+                continue; // deref'd type matches param
             }
 
             if (!arg_type->is_generic && !param_type->is_generic &&

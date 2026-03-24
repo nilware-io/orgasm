@@ -30,6 +30,7 @@ enum class ExprKind {
     Slice,          // expr[start:end]
     FuncCall,       // fn(args) — builtins and lambda calls
     Ref,            // &expr — reference/iterator creation (top-level only)
+    Deref,          // *expr — dereference iterator to value (inserted by inference)
 };
 
 enum class BinOp { Add, Sub, Mul, Div, Eq, Ne, Lt, Gt, Le, Ge, Spaceship };
@@ -46,9 +47,18 @@ struct PinRefInfo {
     std::string name;   // optional :name on first use
 };
 
+// How a value is accessed — set by inference, consumed by codegen
+enum class ValueAccess : uint8_t {
+    Value,      // plain value (e.g. f32, s32)
+    Field,      // struct field access (use '.')
+    Iterator,   // iterator (use '->' for field access, '*' for deref)
+    Reference,  // reference (use '.' for field access)
+};
+
 struct ExprNode {
     ExprKind kind;
     TypePtr resolved_type; // filled during inference
+    ValueAccess access = ValueAccess::Value; // set by inference based on resolved_type
 
     // Literals
     int64_t int_value = 0;

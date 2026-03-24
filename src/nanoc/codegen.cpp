@@ -303,9 +303,8 @@ std::string CodeGenerator::expr_to_cpp(const ExprPtr& e, FlowNode* ctx_node) {
     }
     case ExprKind::FieldAccess: {
         std::string obj = expr_to_cpp(e->children[0], ctx_node);
-        // If the object is an iterator type, use -> for auto-deref
-        auto obj_type = e->children[0]->resolved_type;
-        if (obj_type && obj_type->kind == TypeKind::ContainerIterator)
+        // Use access kind set by inference to decide . vs ->
+        if (e->children[0]->access == ValueAccess::Iterator)
             return obj + "->" + e->field_name;
         return obj + "." + e->field_name;
     }
@@ -358,10 +357,8 @@ std::string CodeGenerator::expr_to_cpp(const ExprPtr& e, FlowNode* ctx_node) {
             // pass the object as implicit first argument
             auto& callee_expr = e->children[0];
             if (callee_expr && callee_expr->kind == ExprKind::FieldAccess) {
-                auto obj_type = callee_expr->children[0]->resolved_type;
-                if (obj_type && (obj_type->kind == TypeKind::ContainerIterator ||
-                    obj_type->kind == TypeKind::Named || obj_type->kind == TypeKind::Struct)) {
-                    // The field is accessed on a struct/iterator — check if the field type is a function
+                auto obj_access = callee_expr->children[0]->access;
+                if (obj_access == ValueAccess::Iterator || obj_access == ValueAccess::Field || obj_access == ValueAccess::Reference) {
                     auto field_type = callee_expr->resolved_type;
                     if (field_type && field_type->kind == TypeKind::Function) {
                         is_method_call = true;
@@ -378,35 +375,28 @@ std::string CodeGenerator::expr_to_cpp(const ExprPtr& e, FlowNode* ctx_node) {
             fn_resolved = e->children[0]->resolved_type;
 
         // Helper: dereference an arg if it's an iterator but the param expects a value/ref
-        auto maybe_deref_arg = [&](const std::string& arg_code, const ExprPtr& arg_expr, size_t param_idx) -> std::string {
-            if (!arg_expr || !arg_expr->resolved_type) return arg_code;
-            if (arg_expr->resolved_type->kind != TypeKind::ContainerIterator) return arg_code;
-            // Iterator arg — check if param expects a non-iterator type
-            if (fn_resolved && fn_resolved->kind == TypeKind::Function &&
-                param_idx < fn_resolved->func_args.size()) {
-                auto param_t = fn_resolved->func_args[param_idx].type;
-                if (param_t && param_t->kind != TypeKind::ContainerIterator)
-                    return "(*" + arg_code + ")";
-            }
-            return "(*" + arg_code + ")"; // default: deref iterators
-        };
-
         std::string s = callee + "(";
         size_t param_offset = 0;
         if (is_method_call) {
-            s += maybe_deref_arg(method_self, e->children[0]->children[0], 0);
+            // Self arg: emit with deref if it's an iterator
+            std::string self_code = method_self;
+            if (e->children[0]->children[0]->access == ValueAccess::Iterator)
+                self_code = "(*" + self_code + ")";
+            s += self_code;
             param_offset = 1;
             if (e->children.size() > arg_start) s += ", ";
         }
         for (size_t i = arg_start; i < e->children.size(); i++) {
             if (i > arg_start) s += ", ";
-            std::string arg_code = expr_to_cpp(e->children[i], ctx_node);
-            s += maybe_deref_arg(arg_code, e->children[i], (i - arg_start) + param_offset);
+            // Deref nodes in the AST are handled by expr_to_cpp below
+            s += expr_to_cpp(e->children[i], ctx_node);
         }
         return s + ")";
     }
     case ExprKind::Ref:
         return "&(" + expr_to_cpp(e->children[0], ctx_node) + ")";
+    case ExprKind::Deref:
+        return "(*" + expr_to_cpp(e->children[0], ctx_node) + ")";
     }
     throw std::runtime_error("codegen: unknown expression kind");
 }
@@ -783,6 +773,29 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
             return result_var;
         }
         return "/* lock void */";
+    }
+
+    if (node.type_id == NodeTypeID::Deref) {
+        // Dereference an iterator to its element value
+        if (!node.inputs.empty()) {
+            std::string src = find_source_pin(node.inputs[0]->id);
+            if (!src.empty()) {
+                auto* src_node = find_source_node(node.inputs[0]->id);
+                if (src_node && !materialized.count(src_node->guid) && src_node->type_id != NodeTypeID::EventBang) {
+                    materialize_node(*src_node, out, indent);
+                }
+            }
+        }
+        std::string input_val = resolve_pin_value(node, 0);
+        std::string var = fresh_var("deref");
+        if (node.outputs[0]->resolved_type) {
+            out << ind << type_to_cpp(node.outputs[0]->resolved_type) << "& " << var << " = (*" << input_val << ");\n";
+        } else {
+            out << ind << "auto& " << var << " = (*" << input_val << ");\n";
+        }
+        if (!node.outputs.empty())
+            pin_to_value[node.outputs[0]->id] = var;
+        return var;
     }
 
     if (node.type_id == NodeTypeID::Cast) {
