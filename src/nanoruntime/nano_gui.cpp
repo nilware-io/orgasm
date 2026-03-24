@@ -59,8 +59,11 @@ void av_create_window(std::string title,
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
 
-    // High DPI scaling: set render scale so the renderer maps points to pixels
-    float dpi_scale = SDL_GetWindowDisplayScale(window);
+    // High DPI scaling: use actual pixel-to-point ratio from the window's backing store
+    int ww, wh, pw, ph;
+    SDL_GetWindowSize(window, &ww, &wh);
+    SDL_GetWindowSizeInPixels(window, &pw, &ph);
+    float dpi_scale = (ww > 0) ? (float)pw / (float)ww : 1.0f;
     if (dpi_scale < 1.0f) dpi_scale = 1.0f;
     SDL_SetRenderScale(renderer, dpi_scale, dpi_scale);
     ImGuiIO& io = ImGui::GetIO();
@@ -95,6 +98,27 @@ void av_create_window(std::string title,
             if (event.type == SDL_EVENT_QUIT) running = false;
             if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
                 if (event.key.scancode == SDL_SCANCODE_ESCAPE) { running = false; break; }
+            }
+            if (event.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED ||
+                event.type == SDL_EVENT_WINDOW_MOVED) {
+                int nww, nwh, npw, nph;
+                SDL_GetWindowSize(window, &nww, &nwh);
+                SDL_GetWindowSizeInPixels(window, &npw, &nph);
+                float new_scale = (nww > 0) ? (float)npw / (float)nww : 1.0f;
+                if (new_scale < 1.0f) new_scale = 1.0f;
+                if (new_scale != dpi_scale) {
+                    dpi_scale = new_scale;
+                    SDL_SetRenderScale(renderer, dpi_scale, dpi_scale);
+                    ImGuiIO& dio = ImGui::GetIO();
+                    dio.Fonts->Clear();
+                    ImFontConfig fc;
+                    fc.SizePixels = 13.0f * dpi_scale;
+                    dio.Fonts->AddFontDefault(&fc);
+                    dio.FontGlobalScale = 1.0f / dpi_scale;
+                    ImGui_ImplSDLRenderer3_DestroyFontsTexture();
+                    dio.Fonts->Build();
+                    ImGui_ImplSDLRenderer3_CreateFontsTexture();
+                }
             }
         }
 

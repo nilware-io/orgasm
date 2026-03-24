@@ -28,17 +28,20 @@ struct SdlImGuiWindow {
             return false;
         }
 
-        // Query OS DPI scale and tell the renderer to map points to pixels
-        dpi_scale = SDL_GetWindowDisplayScale(window);
-        if (dpi_scale < 1.0f) dpi_scale = 1.0f;
-        SDL_SetRenderScale(renderer, dpi_scale, dpi_scale);
+        // Initial DPI: compute pixel-to-point ratio
+        {
+            int ww, wh, pw, ph;
+            SDL_GetWindowSize(window, &ww, &wh);
+            SDL_GetWindowSizeInPixels(window, &pw, &ph);
+            dpi_scale = (ww > 0) ? (float)pw / (float)ww : 1.0f;
+            if (dpi_scale < 1.0f) dpi_scale = 1.0f;
+            SDL_SetRenderScale(renderer, dpi_scale, dpi_scale);
+        }
 
         imgui_ctx = ImGui::CreateContext();
         ImGui::SetCurrentContext(imgui_ctx);
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-        // Load font at high resolution for sharp rendering on HiDPI,
-        // then scale back so it occupies the right amount of space in points.
         ImFontConfig font_cfg;
         font_cfg.SizePixels = 17.0f * dpi_scale;
         io.Fonts->AddFontDefault(&font_cfg);
@@ -51,10 +54,37 @@ struct SdlImGuiWindow {
         return true;
     }
 
+    void update_dpi_scale() {
+        int ww, wh, pw, ph;
+        SDL_GetWindowSize(window, &ww, &wh);
+        SDL_GetWindowSizeInPixels(window, &pw, &ph);
+        float new_scale = (ww > 0) ? (float)pw / (float)ww : 1.0f;
+        if (new_scale < 1.0f) new_scale = 1.0f;
+        if (new_scale != dpi_scale) {
+            dpi_scale = new_scale;
+            SDL_SetRenderScale(renderer, dpi_scale, dpi_scale);
+            // Rebuild font at new DPI
+            ImGui::SetCurrentContext(imgui_ctx);
+            ImGuiIO& io = ImGui::GetIO();
+            io.Fonts->Clear();
+            ImFontConfig font_cfg;
+            font_cfg.SizePixels = 17.0f * dpi_scale;
+            io.Fonts->AddFontDefault(&font_cfg);
+            io.FontGlobalScale = 1.0f / dpi_scale;
+            ImGui_ImplSDLRenderer3_DestroyFontsTexture();
+            io.Fonts->Build();
+            ImGui_ImplSDLRenderer3_CreateFontsTexture();
+        }
+    }
+
     void process_event(SDL_Event& e) {
         if (!open) return;
         ImGui::SetCurrentContext(imgui_ctx);
         ImGui_ImplSDL3_ProcessEvent(&e);
+        if (e.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED ||
+            e.type == SDL_EVENT_WINDOW_MOVED) {
+            update_dpi_scale();
+        }
     }
 
     void begin_frame() {
