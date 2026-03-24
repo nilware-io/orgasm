@@ -2070,8 +2070,10 @@ void FlowEditorWindow::paste_at(ImVec2 canvas_pos) {
                 node.outputs.clear();
                 node.bang_outputs.clear();
 
-                for (int i = 0; i < nt->bang_inputs; i++)
-                    node.bang_inputs.push_back(make_pin("", "bang_in" + std::to_string(i), "", nullptr, FlowPin::BangInput));
+                for (int i = 0; i < nt->bang_inputs; i++) {
+                    std::string biname = (nt->bang_input_ports && i < nt->bang_inputs) ? nt->bang_input_ports[i].name : ("bang_in" + std::to_string(i));
+                    node.bang_inputs.push_back(make_pin("", biname, "", nullptr, FlowPin::BangInput));
+                }
 
                 bool is_expr_paste = is_any_of(cn.type_id, NodeTypeID::Expr, NodeTypeID::ExprBang);
                 int num_outputs = nt->outputs;
@@ -2105,10 +2107,14 @@ void FlowEditorWindow::paste_at(ImVec2 canvas_pos) {
                         node.inputs.push_back(make_pin("", pn, "", nullptr, il ? FlowPin::Lambda : FlowPin::Input));
                     }
                 }
-                for (int i = 0; i < num_outputs; i++)
-                    node.outputs.push_back(make_pin("", "out" + std::to_string(i), "", nullptr, FlowPin::Output));
-                for (int i = 0; i < nt->bang_outputs; i++)
-                    node.bang_outputs.push_back(make_pin("", "bang" + std::to_string(i), "", nullptr, FlowPin::BangOutput));
+                for (int i = 0; i < num_outputs; i++) {
+                    std::string oname = (nt->output_ports && i < nt->outputs) ? nt->output_ports[i].name : ("out" + std::to_string(i));
+                    node.outputs.push_back(make_pin("", oname, "", nullptr, FlowPin::Output));
+                }
+                for (int i = 0; i < nt->bang_outputs; i++) {
+                    std::string bname = (nt->bang_output_ports && i < nt->bang_outputs) ? nt->bang_output_ports[i].name : ("bang" + std::to_string(i));
+                    node.bang_outputs.push_back(make_pin("", bname, "", nullptr, FlowPin::BangOutput));
+                }
             }
             node.rebuild_pin_ids();
             active().selected_nodes.insert(id);
