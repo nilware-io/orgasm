@@ -63,7 +63,7 @@ void CodeGenerator::collect_stored_lambda_params(FlowNode& root,
         // Follow bang chains
         auto bt = follow_bang_from(node.bang_pin.id);
         for (auto* t : bt) collect(*t);
-        for (auto& bout : node.bang_outputs) {
+        for (auto& bout : node.nexts) {
             auto bt2 = follow_bang_from(bout->id);
             for (auto* t : bt2) collect(*t);
         }
@@ -195,7 +195,7 @@ std::string CodeGenerator::fresh_var(const std::string& prefix) {
 }
 
 // Emit bang output: follow bang chain AND call any () -> void values wired to the pin
-void CodeGenerator::emit_bang_output(FlowPin& bout, std::ostringstream& out, int indent) {
+void CodeGenerator::emit_bang_next(FlowPin& bout, std::ostringstream& out, int indent) {
     // Standard bang chain
     for (auto* t : follow_bang_from(bout.id))
         emit_node(*t, out, indent);
@@ -977,7 +977,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
                         // If the root is a data-producing node, materialize it
                         // If it's a bang node (store!, etc.), emit it as a statement
                         auto* root_nt = find_node_type(src_node->type_id);
-                        bool is_bang_root = root_nt && (root_nt->bang_inputs > 0 || root_nt->bang_outputs > 0);
+                        bool is_bang_root = root_nt && (root_nt->num_triggers > 0 || root_nt->num_nexts > 0);
 
                         std::string result;
                         if (!is_bang_root) {
@@ -1572,7 +1572,7 @@ void CodeGenerator::emit_event_handler(FlowNode& event_node, const std::string& 
     out << ") {\n";
 
     // Follow bang chain from event
-    for (auto& bout : event_node.bang_outputs) {
+    for (auto& bout : event_node.nexts) {
         auto targets = follow_bang_from(bout->id);
         for (auto* target : targets)
             emit_node(*target, out, 1);
@@ -1629,7 +1629,7 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
         // Follow post_bang then bang outputs
         for (auto* t : follow_bang_from(node.bang_pin.id))
             emit_node(*t, out, indent);
-        for (auto& bout : node.bang_outputs)
+        for (auto& bout : node.nexts)
             for (auto* t : follow_bang_from(bout->id))
                 emit_node(*t, out, indent);
     }
@@ -1681,7 +1681,7 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
 
         for (auto* t : follow_bang_from(node.bang_pin.id))
             emit_node(*t, out, indent);
-        for (auto& bout : node.bang_outputs)
+        for (auto& bout : node.nexts)
             for (auto* t : follow_bang_from(bout->id))
                 emit_node(*t, out, indent);
     }
@@ -1692,7 +1692,7 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
 
         for (auto* t : follow_bang_from(node.bang_pin.id))
             emit_node(*t, out, indent);
-        for (auto& bout : node.bang_outputs)
+        for (auto& bout : node.nexts)
             for (auto* t : follow_bang_from(bout->id))
                 emit_node(*t, out, indent);
     }
@@ -1706,13 +1706,13 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
         auto saved_materialized = materialized;
 
         // bang_outputs[1] = true branch
-        if (node.bang_outputs.size() > 1)
-            for (auto* t : follow_bang_from(node.bang_outputs[1]->id))
+        if (node.nexts.size() > 1)
+            for (auto* t : follow_bang_from(node.nexts[1]->id))
                 emit_node(*t, out, indent + 1);
 
         // bang_outputs[2] = false branch
-        if (node.bang_outputs.size() > 2) {
-            auto targets = follow_bang_from(node.bang_outputs[2]->id);
+        if (node.nexts.size() > 2) {
+            auto targets = follow_bang_from(node.nexts[2]->id);
             if (!targets.empty()) {
                 // Restore state for false branch so shared nodes emit in both
                 emitted_bang_nodes_ = saved_emitted;
@@ -1725,8 +1725,8 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
         out << ind << "}\n";
 
         // bang_outputs[0] = next (fires after true/false completes)
-        if (!node.bang_outputs.empty())
-            for (auto* t : follow_bang_from(node.bang_outputs[0]->id))
+        if (!node.nexts.empty())
+            for (auto* t : follow_bang_from(node.nexts[0]->id))
                 emit_node(*t, out, indent);
     }
     else if (node.type_id == NodeTypeID::IterateBang) {
@@ -1796,7 +1796,7 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
 
         out << ind << "}\n";
 
-        for (auto& bout : node.bang_outputs)
+        for (auto& bout : node.nexts)
             for (auto* t : follow_bang_from(bout->id))
                 emit_node(*t, out, indent);
     }
@@ -1839,7 +1839,7 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
         }
 
         // bang_out fires AFTER the lock is released
-        for (auto& bout : node.bang_outputs)
+        for (auto& bout : node.nexts)
             for (auto* t : follow_bang_from(bout->id))
                 emit_node(*t, out, indent);
     }
@@ -1849,7 +1849,7 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
                 if (expr) out << ind << expr_to_cpp(expr, &node) << ";\n";
             }
         }
-        for (auto& bout : node.bang_outputs)
+        for (auto& bout : node.nexts)
             for (auto* t : follow_bang_from(bout->id))
                 emit_node(*t, out, indent);
     }
@@ -1868,7 +1868,7 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
         // Just follow bang chain
         for (auto* t : follow_bang_from(node.bang_pin.id))
             emit_node(*t, out, indent);
-        for (auto& bout : node.bang_outputs)
+        for (auto& bout : node.nexts)
             for (auto* t : follow_bang_from(bout->id))
                 emit_node(*t, out, indent);
     }
@@ -1926,7 +1926,7 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
         // Post_bang and bang_out
         for (auto* t : follow_bang_from(node.bang_pin.id))
             emit_node(*t, out, indent);
-        for (auto& bout : node.bang_outputs)
+        for (auto& bout : node.nexts)
             for (auto* t : follow_bang_from(bout->id))
                 emit_node(*t, out, indent);
     }
@@ -1950,7 +1950,7 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
         }
 
         // Follow bang output
-        for (auto& bout : node.bang_outputs)
+        for (auto& bout : node.nexts)
             for (auto* t : follow_bang_from(bout->id))
                 emit_node(*t, out, indent);
     }

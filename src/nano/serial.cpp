@@ -109,9 +109,9 @@ bool load_nano(const std::string& path, FlowGraph& graph) {
             load_error_msg = "Unknown node type \"" + cur_type + "\" (guid: " + cur_guid + ")";
             return;
         }
-        int default_bang_inputs = nt ? nt->bang_inputs : 0;
+        int default_triggers = nt ? nt->num_triggers : 0;
         int default_inputs = nt ? nt->inputs : 0;
-        int default_bang_outputs = nt ? nt->bang_outputs : 0;
+        int default_nexts = nt ? nt->num_nexts : 0;
         int default_outputs = nt ? nt->outputs : 1;
 
         auto cur_type_id = node_type_id_from_string(cur_type.c_str());
@@ -125,8 +125,8 @@ bool load_nano(const std::string& path, FlowGraph& graph) {
         node.args = args_str;
         node.position = {cur_x, cur_y};
 
-        for (int i = 0; i < default_bang_inputs; i++)
-            node.bang_inputs.push_back(make_pin("", "bang_in" + std::to_string(i), "", nullptr, FlowPin::BangInput));
+        for (int i = 0; i < default_triggers; i++)
+            node.triggers.push_back(make_pin("", "bang_in" + std::to_string(i), "", nullptr, FlowPin::BangTrigger));
 
         // Nodes whose args are type names, not expressions
         bool args_are_type = is_any_of(cur_type_id, NodeTypeID::Cast, NodeTypeID::New);
@@ -187,8 +187,8 @@ bool load_nano(const std::string& path, FlowGraph& graph) {
             }
         }
 
-        for (int i = 0; i < default_bang_outputs; i++)
-            node.bang_outputs.push_back(make_pin("", "bang" + std::to_string(i), "", nullptr, FlowPin::BangOutput));
+        for (int i = 0; i < default_nexts; i++)
+            node.nexts.push_back(make_pin("", "bang" + std::to_string(i), "", nullptr, FlowPin::BangNext));
         for (int i = 0; i < num_outputs; i++)
             node.outputs.push_back(make_pin("", "out" + std::to_string(i), "", nullptr, FlowPin::Output));
 
@@ -391,7 +391,7 @@ void save_nano_stream(std::ostream& f, const FlowGraph& graph) {
         for (auto& link : graph.links) {
             bool from_this = false;
             for (auto& p : node.outputs) if (p->id == link.from_pin) from_this = true;
-            for (auto& p : node.bang_outputs) if (p->id == link.from_pin) from_this = true;
+            for (auto& p : node.nexts) if (p->id == link.from_pin) from_this = true;
             if (node.lambda_grab.id == link.from_pin) from_this = true;
             if (node.bang_pin.id == link.from_pin) from_this = true;
             if (!from_this) continue;
@@ -506,8 +506,8 @@ bool load_nano_string(const std::string& data, FlowGraph& graph) {
         for (auto& a : cur_args) { if (!args_str.empty()) args_str += " "; args_str += a; }
 
         auto* nt = find_node_type(cur_type.c_str());
-        int dbi = nt ? nt->bang_inputs : 0, di = nt ? nt->inputs : 0;
-        int dbo = nt ? nt->bang_outputs : 0, do_ = nt ? nt->outputs : 1;
+        int dbi = nt ? nt->num_triggers : 0, di = nt ? nt->inputs : 0;
+        int dbo = nt ? nt->num_nexts : 0, do_ = nt ? nt->outputs : 1;
         auto cur_type_id = node_type_id_from_string(cur_type.c_str());
         bool is_expr = is_any_of(cur_type_id, NodeTypeID::Expr, NodeTypeID::ExprBang);
         int no = do_;
@@ -516,7 +516,7 @@ bool load_nano_string(const std::string& data, FlowGraph& graph) {
         node.id = graph.next_node_id();
         node.guid = cur_guid; node.type_id = cur_type_id; node.args = args_str;
         node.position = {cur_x, cur_y};
-        for (int i = 0; i < dbi; i++) node.bang_inputs.push_back(make_pin("","bang_in"+std::to_string(i), "", nullptr, FlowPin::BangInput));
+        for (int i = 0; i < dbi; i++) node.triggers.push_back(make_pin("","bang_in"+std::to_string(i), "", nullptr, FlowPin::BangTrigger));
 
         bool args_are_type = is_any_of(cur_type_id, NodeTypeID::Cast, NodeTypeID::New);
 
@@ -559,7 +559,7 @@ bool load_nano_string(const std::string& data, FlowGraph& graph) {
             }
         }
 
-        for (int i = 0; i < dbo; i++) node.bang_outputs.push_back(make_pin("","bang"+std::to_string(i), "", nullptr, FlowPin::BangOutput));
+        for (int i = 0; i < dbo; i++) node.nexts.push_back(make_pin("","bang"+std::to_string(i), "", nullptr, FlowPin::BangNext));
         for (int i = 0; i < no; i++) node.outputs.push_back(make_pin("","out"+std::to_string(i), "", nullptr, FlowPin::Output));
         node.rebuild_pin_ids();
 

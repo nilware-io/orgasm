@@ -66,14 +66,14 @@ struct NodeType {
     NodeTypeID type_id;
     const char* name;
     const char* desc;
-    int bang_inputs; int inputs; int bang_outputs; int outputs;
+    int num_triggers; int inputs; int num_nexts; int outputs;
     bool is_event;
     bool no_post_bang;
     bool has_lambda;
     bool is_declaration;
-    const PortDesc* bang_input_ports;   // array of bang_inputs entries (or nullptr)
+    const PortDesc* trigger_ports;      // array of num_triggers entries (or nullptr)
     const PortDesc* input_ports;        // array of inputs entries (or nullptr)
-    const PortDesc* bang_output_ports;  // array of bang_outputs entries (or nullptr)
+    const PortDesc* next_ports;         // array of num_nexts entries (or nullptr)
     const PortDesc* output_ports;       // array of outputs entries (or nullptr)
 };
 

@@ -63,9 +63,9 @@ static std::pair<std::string, std::string> get_port_desc(const FlowNode& node, c
     };
 
     if (nt) {
-        auto r = find_bang(node.bang_inputs, nt->bang_input_ports, nt->bang_inputs);
+        auto r = find_bang(node.triggers, nt->trigger_ports, nt->num_triggers);
         if (!r.first.empty()) return r;
-        r = find_bang(node.bang_outputs, nt->bang_output_ports, nt->bang_outputs);
+        r = find_bang(node.nexts, nt->next_ports, nt->num_nexts);
         if (!r.first.empty()) return r;
         r = find_bang(node.outputs, nt->output_ports, nt->outputs);
         if (!r.first.empty()) return r;
@@ -383,9 +383,9 @@ ImVec2 FlowEditorWindow::get_pin_pos(const FlowNode& node, const FlowPin& pin, I
     }
 
     // Bang inputs first on top
-    if (pin.direction == FlowPin::BangInput) {
+    if (pin.direction == FlowPin::BangTrigger) {
         int idx = 0;
-        for (auto& p : node.bang_inputs) { if (p->id == pin.id) break; idx++; }
+        for (auto& p : node.triggers) { if (p->id == pin.id) break; idx++; }
         float x = node.position.x + PIN_SPACING * (idx + 0.5f);
         float y = node.position.y;
         return canvas_to_screen({x, y}, origin);
@@ -393,7 +393,7 @@ ImVec2 FlowEditorWindow::get_pin_pos(const FlowNode& node, const FlowPin& pin, I
 
     if (pin.direction == FlowPin::Input || pin.direction == FlowPin::Lambda) {
         // Data inputs and lambdas after bang inputs on the top row.
-        int bang_offset = (int)node.bang_inputs.size();
+        int bang_offset = (int)node.triggers.size();
         int slot = 0;
         for (auto& p : node.inputs) { if (p->id == pin.id) break; slot++; }
         float x = node.position.x + PIN_SPACING * (bang_offset + slot + 0.5f);
@@ -402,16 +402,16 @@ ImVec2 FlowEditorWindow::get_pin_pos(const FlowNode& node, const FlowPin& pin, I
     }
 
     // Bang outputs first on bottom, then data outputs
-    if (pin.direction == FlowPin::BangOutput) {
+    if (pin.direction == FlowPin::BangNext) {
         int idx = 0;
-        for (auto& p : node.bang_outputs) { if (p->id == pin.id) break; idx++; }
+        for (auto& p : node.nexts) { if (p->id == pin.id) break; idx++; }
         float x = node.position.x + PIN_SPACING * (idx + 0.5f);
         float y = node.position.y + node.size.y;
         return canvas_to_screen({x, y}, origin);
     }
 
     // Data outputs after bang outputs
-    int offset = (int)node.bang_outputs.size();
+    int offset = (int)node.nexts.size();
     int idx = 0;
     for (auto& p : node.outputs) { if (p->id == pin.id) break; idx++; }
     float x = node.position.x + PIN_SPACING * (offset + idx + 0.5f);
@@ -422,18 +422,18 @@ ImVec2 FlowEditorWindow::get_pin_pos(const FlowNode& node, const FlowPin& pin, I
 FlowEditorWindow::PinHit FlowEditorWindow::hit_test_pin(ImVec2 sp, ImVec2 co, float radius) const {
     float r2 = radius * radius * active().canvas_zoom * active().canvas_zoom;
     for (auto& node : active().graph.nodes) {
-        for (auto& pin : node.bang_inputs)
+        for (auto& pin : node.triggers)
             if (dist2(sp, get_pin_pos(node, *pin, co)) < r2)
-                return {node.id, pin->id, FlowPin::BangInput};
+                return {node.id, pin->id, FlowPin::BangTrigger};
         for (auto& pin : node.inputs)
             if (dist2(sp, get_pin_pos(node, *pin, co)) < r2)
                 return {node.id, pin->id, pin->direction};
         for (auto& pin : node.outputs)
             if (dist2(sp, get_pin_pos(node, *pin, co)) < r2)
                 return {node.id, pin->id, FlowPin::Output};
-        for (auto& pin : node.bang_outputs)
+        for (auto& pin : node.nexts)
             if (dist2(sp, get_pin_pos(node, *pin, co)) < r2)
-                return {node.id, pin->id, FlowPin::BangOutput};
+                return {node.id, pin->id, FlowPin::BangNext};
         if (!node.lambda_grab.id.empty() && dist2(sp, get_pin_pos(node, node.lambda_grab, co)) < r2) {
             auto* nt_hit = find_node_type(node.type_id);
             if (nt_hit && nt_hit->has_lambda)
@@ -442,7 +442,7 @@ FlowEditorWindow::PinHit FlowEditorWindow::hit_test_pin(ImVec2 sp, ImVec2 co, fl
         if (!node.bang_pin.id.empty() && dist2(sp, get_pin_pos(node, node.bang_pin, co)) < r2) {
             auto* nt_hit = find_node_type(node.type_id);
             bool hidden = (nt_hit && (nt_hit->is_event || nt_hit->no_post_bang));
-            if (!hidden) return {node.id, node.bang_pin.id, FlowPin::BangOutput};
+            if (!hidden) return {node.id, node.bang_pin.id, FlowPin::BangNext};
         }
     }
     return {-1, "", FlowPin::Input};
@@ -455,9 +455,9 @@ int FlowEditorWindow::hit_test_link(ImVec2 sp, ImVec2 co, float threshold) const
         bool from_grab = false, from_bang_pin = false, to_lambda = false;
         for (auto& n : active().graph.nodes) {
             for (auto& p : n.outputs) if (p->id == link.from_pin) { fp = get_pin_pos(n, *p, co); ff = true; }
-            for (auto& p : n.bang_outputs) if (p->id == link.from_pin) { fp = get_pin_pos(n, *p, co); ff = true; }
+            for (auto& p : n.nexts) if (p->id == link.from_pin) { fp = get_pin_pos(n, *p, co); ff = true; }
             if (n.lambda_grab.id == link.from_pin) { fp = get_pin_pos(n, n.lambda_grab, co); ff = true; from_grab = true; }
-            for (auto& p : n.bang_inputs) if (p->id == link.to_pin) { tp = get_pin_pos(n, *p, co); ft = true; }
+            for (auto& p : n.triggers) if (p->id == link.to_pin) { tp = get_pin_pos(n, *p, co); ft = true; }
             for (auto& p : n.inputs) if (p->id == link.to_pin) { tp = get_pin_pos(n, *p, co); ft = true; if (p->direction == FlowPin::Lambda) to_lambda = true; }
             if (n.bang_pin.id == link.from_pin) { fp = get_pin_pos(n, n.bang_pin, co); ff = true; from_bang_pin = true; }
         }
@@ -485,8 +485,8 @@ void FlowEditorWindow::draw_node(ImDrawList* dl, FlowNode& node, ImVec2 origin) 
     bool is_label = (node.type_id == NodeTypeID::Label);
 
     // Width from pins (top row = inputs + lambdas, bottom row = outputs)
-    int top_pins = (int)(node.bang_inputs.size() + node.inputs.size());
-    int bottom_pins = (int)(node.bang_outputs.size() + node.outputs.size());
+    int top_pins = (int)(node.triggers.size() + node.inputs.size());
+    int bottom_pins = (int)(node.nexts.size() + node.outputs.size());
     int max_pins = std::max(top_pins, bottom_pins);
     float pin_w = (float)(max_pins + 1) * PIN_SPACING;
 
@@ -562,7 +562,7 @@ void FlowEditorWindow::draw_node(ImDrawList* dl, FlowNode& node, ImVec2 origin) 
     float pr = PIN_RADIUS * active().canvas_zoom;
     if (!is_structural) {
         // Bang inputs (top, before data inputs)
-        for (auto& pin : node.bang_inputs) {
+        for (auto& pin : node.triggers) {
             ImVec2 pp = get_pin_pos(node, *pin, origin);
             draw_pin(dl, pp, pr, IM_COL32(255, 200, 80, 255), PinShape::Square, active().canvas_zoom);
         }
@@ -574,7 +574,7 @@ void FlowEditorWindow::draw_node(ImDrawList* dl, FlowNode& node, ImVec2 origin) 
                 draw_pin(dl, pp, pr, COL_PIN_IN, io_shape, active().canvas_zoom);
         }
         // Bang outputs (bottom, before data outputs)
-        for (auto& pin : node.bang_outputs) {
+        for (auto& pin : node.nexts) {
             ImVec2 pp = get_pin_pos(node, *pin, origin);
             draw_pin(dl, pp, pr, IM_COL32(255, 200, 80, 255), PinShape::Square, active().canvas_zoom);
         }
@@ -607,10 +607,10 @@ void FlowEditorWindow::draw_link(ImDrawList* dl, const FlowLink& link, ImVec2 or
     FlowPin* to_pin_ptr = nullptr;
     for (auto& n : active().graph.nodes) {
         for (auto& p : n.outputs) if (p->id == link.from_pin) { fp = get_pin_pos(n, *p, origin); ff = true; from_pin_ptr = p.get(); }
-        for (auto& p : n.bang_outputs) if (p->id == link.from_pin) { fp = get_pin_pos(n, *p, origin); ff = true; from_pin_ptr = p.get(); }
+        for (auto& p : n.nexts) if (p->id == link.from_pin) { fp = get_pin_pos(n, *p, origin); ff = true; from_pin_ptr = p.get(); }
         if (n.lambda_grab.id == link.from_pin) { fp = get_pin_pos(n, n.lambda_grab, origin); ff = true; from_grab = true; from_pin_ptr = &n.lambda_grab; }
         if (n.bang_pin.id == link.from_pin) { fp = get_pin_pos(n, n.bang_pin, origin); ff = true; from_bang_pin = true; from_pin_ptr = &n.bang_pin; }
-        for (auto& p : n.bang_inputs) if (p->id == link.to_pin) { tp = get_pin_pos(n, *p, origin); ft = true; to_pin_ptr = p.get(); }
+        for (auto& p : n.triggers) if (p->id == link.to_pin) { tp = get_pin_pos(n, *p, origin); ft = true; to_pin_ptr = p.get(); }
         for (auto& p : n.inputs) if (p->id == link.to_pin) { tp = get_pin_pos(n, *p, origin); ft = true; to_pin_ptr = p.get(); if (p->direction == FlowPin::Lambda) to_lambda = true; }
     }
     if (!ff || !ft) return;
@@ -865,7 +865,7 @@ void FlowEditorWindow::draw() {
                 // Start new link from any pin
                 dragging_link_from_pin_ = pin_hit.pin_id;
                 dragging_link_from_output_ = (pin_hit.dir == FlowPin::Output ||
-                    pin_hit.dir == FlowPin::BangOutput || pin_hit.dir == FlowPin::LambdaGrab);
+                    pin_hit.dir == FlowPin::BangNext || pin_hit.dir == FlowPin::LambdaGrab);
                 dragging_node_ = -1;
                 dragging_selection_ = false;
             } else {
@@ -948,15 +948,15 @@ void FlowEditorWindow::draw() {
             auto pin_hit = hit_test_pin(mouse_pos, canvas_origin);
             if (!pin_hit.pin_id.empty()) {
                 bool target_is_input = (pin_hit.dir == FlowPin::Input ||
-                    pin_hit.dir == FlowPin::BangInput || pin_hit.dir == FlowPin::Lambda);
+                    pin_hit.dir == FlowPin::BangTrigger || pin_hit.dir == FlowPin::Lambda);
                 bool target_is_output = (pin_hit.dir == FlowPin::Output ||
-                    pin_hit.dir == FlowPin::BangOutput || pin_hit.dir == FlowPin::LambdaGrab);
+                    pin_hit.dir == FlowPin::BangNext || pin_hit.dir == FlowPin::LambdaGrab);
 
                 // Valid connection: opposite directions (output→input or input→output)
                 // Also allow output→bang_output (for () -> void lambda wiring)
                 bool valid = (dragging_link_from_output_ && target_is_input) ||
                              (!dragging_link_from_output_ && target_is_output) ||
-                             (dragging_link_from_output_ && pin_hit.dir == FlowPin::BangOutput);
+                             (dragging_link_from_output_ && pin_hit.dir == FlowPin::BangNext);
 
                 if (valid) {
                     std::string from_pin, to_pin;
@@ -969,7 +969,7 @@ void FlowEditorWindow::draw() {
                         to_pin = dragging_link_from_pin_;
                     }
                     // Don't erase existing links for bang pins (allow multiple)
-                    bool is_bang_target = (pin_hit.dir == FlowPin::BangInput || pin_hit.dir == FlowPin::BangOutput);
+                    bool is_bang_target = (pin_hit.dir == FlowPin::BangTrigger || pin_hit.dir == FlowPin::BangNext);
                     if (!is_bang_target && dragging_link_from_output_) {
                         std::erase_if(active().graph.links, [&](auto& l) { return l.to_pin == to_pin; });
                     } else if (!is_bang_target && !dragging_link_from_output_) {
@@ -1025,10 +1025,10 @@ void FlowEditorWindow::draw() {
                 std::string anchor_id = grab_is_output_ ? gl.to_pin : gl.from_pin;
                 for (auto& n : active().graph.nodes) {
                     for (auto& p : n.outputs) if (p->id == anchor_id) { anchor = get_pin_pos(n, *p, canvas_origin); found = true; }
-                    for (auto& p : n.bang_outputs) if (p->id == anchor_id) { anchor = get_pin_pos(n, *p, canvas_origin); found = true; }
+                    for (auto& p : n.nexts) if (p->id == anchor_id) { anchor = get_pin_pos(n, *p, canvas_origin); found = true; }
                     if (n.lambda_grab.id == anchor_id) { anchor = get_pin_pos(n, n.lambda_grab, canvas_origin); found = true; }
                     if (n.bang_pin.id == anchor_id) { anchor = get_pin_pos(n, n.bang_pin, canvas_origin); found = true; }
-                    for (auto& p : n.bang_inputs) if (p->id == anchor_id) { anchor = get_pin_pos(n, *p, canvas_origin); found = true; }
+                    for (auto& p : n.triggers) if (p->id == anchor_id) { anchor = get_pin_pos(n, *p, canvas_origin); found = true; }
                     for (auto& p : n.inputs) if (p->id == anchor_id) { anchor = get_pin_pos(n, *p, canvas_origin); found = true; }
                 }
                 if (found) {
@@ -1046,7 +1046,7 @@ void FlowEditorWindow::draw() {
             if (!pin_hit.pin_id.empty()) {
                 if (grab_is_output_) {
                     // Was dragging output side: drop on another output pin
-                    if (pin_hit.dir == FlowPin::Output || pin_hit.dir == FlowPin::BangOutput || pin_hit.dir == FlowPin::LambdaGrab) {
+                    if (pin_hit.dir == FlowPin::Output || pin_hit.dir == FlowPin::BangNext || pin_hit.dir == FlowPin::LambdaGrab) {
                         for (auto& gl : grabbed_links_)
                             active().graph.add_link(pin_hit.pin_id, gl.to_pin);
                         reconnected = true;
@@ -1054,8 +1054,8 @@ void FlowEditorWindow::draw() {
                     }
                 } else {
                     // Was dragging input side: drop on another input pin (or bang output for lambda→bang)
-                    if (pin_hit.dir == FlowPin::Input || pin_hit.dir == FlowPin::BangInput || pin_hit.dir == FlowPin::Lambda || pin_hit.dir == FlowPin::BangOutput) {
-                        if (pin_hit.dir != FlowPin::BangInput && pin_hit.dir != FlowPin::BangOutput)
+                    if (pin_hit.dir == FlowPin::Input || pin_hit.dir == FlowPin::BangTrigger || pin_hit.dir == FlowPin::Lambda || pin_hit.dir == FlowPin::BangNext) {
+                        if (pin_hit.dir != FlowPin::BangTrigger && pin_hit.dir != FlowPin::BangNext)
                             std::erase_if(active().graph.links, [&](auto& l) { return l.to_pin == pin_hit.pin_id; });
                         for (auto& gl : grabbed_links_)
                             active().graph.add_link(gl.from_pin, pin_hit.pin_id);
@@ -1138,7 +1138,7 @@ void FlowEditorWindow::draw() {
         if (!pin_hit.pin_id.empty()) {
             grabbed_links_.clear();
             grabbed_pin_ = pin_hit.pin_id;
-            grab_is_output_ = (pin_hit.dir == FlowPin::Output || pin_hit.dir == FlowPin::BangOutput ||
+            grab_is_output_ = (pin_hit.dir == FlowPin::Output || pin_hit.dir == FlowPin::BangNext ||
                                pin_hit.dir == FlowPin::LambdaGrab);
             grab_pending_ = true;
             grab_start_ = mouse_pos;
@@ -1201,13 +1201,13 @@ void FlowEditorWindow::draw() {
             for (auto& pin : node.outputs) {
                 if (pin->id == dragging_link_from_pin_) { from = get_pin_pos(node, *pin, canvas_origin); found = true; break; }
             }
-            if (!found) for (auto& pin : node.bang_outputs) {
+            if (!found) for (auto& pin : node.nexts) {
                 if (pin->id == dragging_link_from_pin_) { from = get_pin_pos(node, *pin, canvas_origin); found = true; break; }
             }
             if (!found) for (auto& pin : node.inputs) {
                 if (pin->id == dragging_link_from_pin_) { from = get_pin_pos(node, *pin, canvas_origin); found = true; break; }
             }
-            if (!found) for (auto& pin : node.bang_inputs) {
+            if (!found) for (auto& pin : node.triggers) {
                 if (pin->id == dragging_link_from_pin_) { from = get_pin_pos(node, *pin, canvas_origin); found = true; break; }
             }
             if (!found && node.lambda_grab.id == dragging_link_from_pin_) {
@@ -1223,10 +1223,10 @@ void FlowEditorWindow::draw() {
             if (found) {
                 auto target = hit_test_pin(mouse_pos, canvas_origin);
                 bool target_is_input = !target.pin_id.empty() &&
-                    (target.dir == FlowPin::Input || target.dir == FlowPin::BangInput ||
-                     target.dir == FlowPin::Lambda || target.dir == FlowPin::BangOutput);
+                    (target.dir == FlowPin::Input || target.dir == FlowPin::BangTrigger ||
+                     target.dir == FlowPin::Lambda || target.dir == FlowPin::BangNext);
                 bool target_is_output = !target.pin_id.empty() &&
-                    (target.dir == FlowPin::Output || target.dir == FlowPin::BangOutput ||
+                    (target.dir == FlowPin::Output || target.dir == FlowPin::BangNext ||
                      target.dir == FlowPin::LambdaGrab);
                 bool valid_target = (dragging_link_from_output_ && target_is_input) ||
                                     (!dragging_link_from_output_ && target_is_output);
@@ -1268,7 +1268,7 @@ void FlowEditorWindow::draw() {
                         draw_pin_highlight(dl, pp, pr, COL_PIN_HOVER, shape, active().canvas_zoom);
                     }
             };
-            check(node.bang_inputs, PinShape::Square);
+            check(node.triggers, PinShape::Square);
             // Inputs: check each pin's direction for shape
             for (auto& pin : node.inputs)
                 if (pin->id == hovered_pin.pin_id) {
@@ -1276,7 +1276,7 @@ void FlowEditorWindow::draw() {
                     PinShape shape = (pin->direction == FlowPin::Lambda) ? PinShape::LambdaDown : io_shape;
                     draw_pin_highlight(dl, pp, pr, COL_PIN_HOVER, shape, active().canvas_zoom);
                 }
-            check(node.bang_outputs, PinShape::Square);
+            check(node.nexts, PinShape::Square);
             check(node.outputs, io_shape);
             if (node.lambda_grab.id == hovered_pin.pin_id) {
                 ImVec2 pp = get_pin_pos(node, node.lambda_grab, canvas_origin);
@@ -1296,10 +1296,10 @@ void FlowEditorWindow::draw() {
                     for (auto& p : pins) if (p->id == hovered_pin.pin_id) return p.get();
                     return nullptr;
                 };
-                const FlowPin* pin = find_pin(node.bang_inputs);
+                const FlowPin* pin = find_pin(node.triggers);
                 if (!pin) pin = find_pin(node.inputs);
                 if (!pin) pin = find_pin(node.outputs);
-                if (!pin) pin = find_pin(node.bang_outputs);
+                if (!pin) pin = find_pin(node.nexts);
                 if (!pin && node.lambda_grab.id == hovered_pin.pin_id) pin = &node.lambda_grab;
                 if (!pin && node.bang_pin.id == hovered_pin.pin_id) pin = &node.bang_pin;
                 if (pin) {
@@ -1307,7 +1307,7 @@ void FlowEditorWindow::draw() {
                     std::string type_str;
                     if (pin->resolved_type)
                         type_str = type_to_string(pin->resolved_type);
-                    else if (pin->direction == FlowPin::BangInput || pin->direction == FlowPin::BangOutput)
+                    else if (pin->direction == FlowPin::BangTrigger || pin->direction == FlowPin::BangNext)
                         type_str = "bang";
                     else
                         type_str = "?";
@@ -1330,11 +1330,11 @@ void FlowEditorWindow::draw() {
                     std::string from_label, to_label;
                     for (auto& n : active().graph.nodes) {
                         for (auto& p : n.outputs) if (p->id == link.from_pin) from_label = pin_label(n, *p);
-                        for (auto& p : n.bang_outputs) if (p->id == link.from_pin) from_label = pin_label(n, *p);
+                        for (auto& p : n.nexts) if (p->id == link.from_pin) from_label = pin_label(n, *p);
                         if (n.lambda_grab.id == link.from_pin) from_label = pin_label(n, n.lambda_grab);
                         if (n.bang_pin.id == link.from_pin) from_label = pin_label(n, n.bang_pin);
                         for (auto& p : n.inputs) if (p->id == link.to_pin) to_label = pin_label(n, *p);
-                        for (auto& p : n.bang_inputs) if (p->id == link.to_pin) to_label = pin_label(n, *p);
+                        for (auto& p : n.triggers) if (p->id == link.to_pin) to_label = pin_label(n, *p);
                     }
                     if (!from_label.empty() && !to_label.empty()) {
                         // Get types for the link endpoints
@@ -1500,10 +1500,10 @@ void FlowEditorWindow::draw() {
                     node_type = "expr";
                     rest_args = edit_buf_;
                 }
-                int default_bang_inputs = nt ? nt->bang_inputs : 0;
+                int default_triggers = nt ? nt->num_triggers : 0;
                 int default_inputs = nt ? nt->inputs : 0;
                 int default_outputs = nt ? nt->outputs : 0;
-                int default_bang_outputs = nt ? nt->bang_outputs : 0;
+                int default_nexts = nt ? nt->num_nexts : 0;
 
                 // Auto-assign guid if not set
                 auto& node = *edit_node;
@@ -1656,13 +1656,13 @@ void FlowEditorWindow::draw() {
                 }
 
                 // Resize bang inputs
-                resize_pins(node.bang_inputs, default_bang_inputs,
-                            make_names("bang_in", default_bang_inputs), FlowPin::BangInput, false);
+                resize_pins(node.triggers, default_triggers,
+                            make_names("bang_in", default_triggers), FlowPin::BangTrigger, false);
                 if (needed_outputs >= 0)
                     resize_pins(node.outputs, needed_outputs,
                                 make_names("out", needed_outputs), FlowPin::Output, true);
-                resize_pins(node.bang_outputs, default_bang_outputs,
-                            make_names("bang", default_bang_outputs), FlowPin::BangOutput, true);
+                resize_pins(node.nexts, default_nexts,
+                            make_names("bang", default_nexts), FlowPin::BangNext, true);
 
                 // Rebuild pin IDs from guid and update links
                 // Collect old->new ID mapping for pins whose name changed
@@ -1679,10 +1679,10 @@ void FlowEditorWindow::draw() {
                         }
                     }
                 };
-                update_pin_ids(node.bang_inputs);
+                update_pin_ids(node.triggers);
                 update_pin_ids(node.inputs);
                 update_pin_ids(node.outputs);
-                update_pin_ids(node.bang_outputs);
+                update_pin_ids(node.nexts);
                 {
                     std::string new_id = node.pin_id("as_lambda");
                     for (auto& l : active().graph.links) {
@@ -2065,10 +2065,10 @@ void FlowEditorWindow::copy_selection() {
     for (auto& node : active().graph.nodes) {
         if (!active().selected_nodes.count(node.id)) continue;
         auto register_pin = [&](const FlowPin& p) { pin_owner[p.id] = {node.id, p.name}; };
-        for (auto& p : node.bang_inputs) register_pin(*p);
+        for (auto& p : node.triggers) register_pin(*p);
         for (auto& p : node.inputs) register_pin(*p);
         for (auto& p : node.outputs) register_pin(*p);
-        for (auto& p : node.bang_outputs) register_pin(*p);
+        for (auto& p : node.nexts) register_pin(*p);
         register_pin(node.lambda_grab);
         register_pin(node.bang_pin);
     }
@@ -2106,14 +2106,14 @@ void FlowEditorWindow::paste_at(ImVec2 canvas_pos) {
             // Rebuild pins from type descriptor
             auto* nt = find_node_type(cn.type_id);
             if (nt) {
-                node.bang_inputs.clear();
+                node.triggers.clear();
                 node.inputs.clear();
                 node.outputs.clear();
-                node.bang_outputs.clear();
+                node.nexts.clear();
 
-                for (int i = 0; i < nt->bang_inputs; i++) {
-                    std::string biname = (nt->bang_input_ports && i < nt->bang_inputs) ? nt->bang_input_ports[i].name : ("bang_in" + std::to_string(i));
-                    node.bang_inputs.push_back(make_pin("", biname, "", nullptr, FlowPin::BangInput));
+                for (int i = 0; i < nt->num_triggers; i++) {
+                    std::string biname = (nt->trigger_ports && i < nt->num_triggers) ? nt->trigger_ports[i].name : ("bang_in" + std::to_string(i));
+                    node.triggers.push_back(make_pin("", biname, "", nullptr, FlowPin::BangTrigger));
                 }
 
                 bool is_expr_paste = is_any_of(cn.type_id, NodeTypeID::Expr, NodeTypeID::ExprBang);
@@ -2152,9 +2152,9 @@ void FlowEditorWindow::paste_at(ImVec2 canvas_pos) {
                     std::string oname = (nt->output_ports && i < nt->outputs) ? nt->output_ports[i].name : ("out" + std::to_string(i));
                     node.outputs.push_back(make_pin("", oname, "", nullptr, FlowPin::Output));
                 }
-                for (int i = 0; i < nt->bang_outputs; i++) {
-                    std::string bname = (nt->bang_output_ports && i < nt->bang_outputs) ? nt->bang_output_ports[i].name : ("bang" + std::to_string(i));
-                    node.bang_outputs.push_back(make_pin("", bname, "", nullptr, FlowPin::BangOutput));
+                for (int i = 0; i < nt->num_nexts; i++) {
+                    std::string bname = (nt->next_ports && i < nt->num_nexts) ? nt->next_ports[i].name : ("bang" + std::to_string(i));
+                    node.nexts.push_back(make_pin("", bname, "", nullptr, FlowPin::BangNext));
                 }
             }
             node.rebuild_pin_ids();

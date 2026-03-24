@@ -79,7 +79,7 @@ struct CodeGenerator {
     void emit_node(FlowNode& node, std::ostringstream& out, int indent);
 
     // Emit bang output: follow chain + call any () -> void values wired to the pin
-    void emit_bang_output(FlowPin& bout, std::ostringstream& out, int indent);
+    void emit_bang_next(FlowPin& bout, std::ostringstream& out, int indent);
 
     // Node helpers
     std::vector<FlowNode*> find_nodes(NodeTypeID type_id);

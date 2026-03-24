@@ -77,8 +77,8 @@ void GraphInference::clear_all(FlowGraph& graph) {
     for (auto& node : graph.nodes) {
         for (auto& p : node.inputs) p->resolved_type = nullptr;
         for (auto& p : node.outputs) p->resolved_type = nullptr;
-        for (auto& p : node.bang_inputs) p->resolved_type = nullptr;
-        for (auto& p : node.bang_outputs) p->resolved_type = nullptr;
+        for (auto& p : node.triggers) p->resolved_type = nullptr;
+        for (auto& p : node.nexts) p->resolved_type = nullptr;
         node.lambda_grab.resolved_type = nullptr;
         node.bang_pin.resolved_type = nullptr;
         for (auto& e : node.parsed_exprs) clear_expr_types(e);
@@ -181,7 +181,7 @@ void GraphInference::resolve_pin_type_names(FlowGraph& graph) {
     auto resolve = [&](FlowPin& p) {
         if (p.resolved_type) return; // already resolved (e.g. set directly by type_utils)
         // Bang and lambda pins don't need type resolution from type_name
-        if (p.direction == FlowPin::BangInput || p.direction == FlowPin::BangOutput) {
+        if (p.direction == FlowPin::BangTrigger || p.direction == FlowPin::BangNext) {
             p.resolved_type = pool.t_bang;
             return;
         }
@@ -191,10 +191,10 @@ void GraphInference::resolve_pin_type_names(FlowGraph& graph) {
         p.resolved_type = pool.intern(p.type_name);
     };
     for (auto& node : graph.nodes) {
-        for (auto& p : node.bang_inputs) resolve(*p);
+        for (auto& p : node.triggers) resolve(*p);
         for (auto& p : node.inputs) resolve(*p);
         for (auto& p : node.outputs) resolve(*p);
-        for (auto& p : node.bang_outputs) resolve(*p);
+        for (auto& p : node.nexts) resolve(*p);
         resolve(node.lambda_grab);
         resolve(node.bang_pin);
     }
@@ -1112,7 +1112,7 @@ void GraphInference::collect_lambda_params(FlowGraph& graph, FlowNode& node,
     follow_bang_chain(graph, node.bang_pin.id, params, visited);
 
     // 3. Output bangs (left to right): follow each bang output's chain
-    for (auto& bout : node.bang_outputs) {
+    for (auto& bout : node.nexts) {
         follow_bang_chain(graph, bout->id, params, visited);
     }
 }

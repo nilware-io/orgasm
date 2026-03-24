@@ -62,8 +62,8 @@ struct GraphBuilder {
         auto* nt = find_node_type(type.c_str());
         bool is_expr = type == "expr";
         int di = nt ? nt->inputs : 0;
-        int nbi = nt ? nt->bang_inputs : 0;
-        int nbo = nt ? nt->bang_outputs : 0;
+        int nbi = nt ? nt->num_triggers : 0;
+        int nbo = nt ? nt->num_nexts : 0;
         int no = (num_outputs >= 0) ? num_outputs : (nt ? nt->outputs : 1);
 
         FlowNode node;
@@ -74,7 +74,7 @@ struct GraphBuilder {
         node.position = {0, 0};
 
         for (int i = 0; i < nbi; i++)
-            node.bang_inputs.push_back(make_pin("", "bang_in" + std::to_string(i), "", nullptr, FlowPin::BangInput));
+            node.triggers.push_back(make_pin("", "bang_in" + std::to_string(i), "", nullptr, FlowPin::BangTrigger));
 
         if (is_expr) {
             auto slots = scan_slots(args);
@@ -125,8 +125,8 @@ struct GraphBuilder {
         for (int i = 0; i < no; i++)
             node.outputs.push_back(make_pin("", "out" + std::to_string(i), "", nullptr, FlowPin::Output));
         for (int i = 0; i < nbo; i++) {
-            std::string bname = (nt && nt->bang_output_ports && i < nt->bang_outputs) ? nt->bang_output_ports[i].name : ("bang" + std::to_string(i));
-            node.bang_outputs.push_back(make_pin("", bname, "", nullptr, FlowPin::BangOutput));
+            std::string bname = (nt && nt->next_ports && i < nt->num_nexts) ? nt->next_ports[i].name : ("bang" + std::to_string(i));
+            node.nexts.push_back(make_pin("", bname, "", nullptr, FlowPin::BangNext));
         }
 
         node.rebuild_pin_ids();
@@ -3763,13 +3763,13 @@ TEST(cast_output_type_independent_of_input) {
 TEST(resize_has_bang_input) {
     GraphBuilder gb;
     auto& node = gb.add("r1", "resize!", "$my_vec 32");
-    ASSERT_EQ((int)node.bang_inputs.size(), 1);
+    ASSERT_EQ((int)node.triggers.size(), 1);
 }
 
 TEST(resize_has_bang_output) {
     GraphBuilder gb;
     auto& node = gb.add("r1", "resize!", "$my_vec 32");
-    ASSERT_EQ((int)node.bang_outputs.size(), 1);
+    ASSERT_EQ((int)node.nexts.size(), 1);
 }
 
 TEST(resize_no_data_outputs) {
@@ -4074,8 +4074,8 @@ TEST(resize_has_correct_pin_layout) {
     // resize! should have: 1 bang_in, 2 inputs (target, size), 1 bang_out, 0 data outputs
     GraphBuilder gb;
     auto& node = gb.add("r1", "resize!", "$my_vec 32");
-    ASSERT_EQ((int)node.bang_inputs.size(), 1);
-    ASSERT_EQ((int)node.bang_outputs.size(), 1);
+    ASSERT_EQ((int)node.triggers.size(), 1);
+    ASSERT_EQ((int)node.nexts.size(), 1);
     ASSERT_EQ((int)node.outputs.size(), 0);
 }
 
@@ -4192,16 +4192,16 @@ TEST(iterator_method_call_arg_gets_auto_deref) {
 TEST(select_bang_has_three_bang_outputs) {
     GraphBuilder gb;
     auto& node = gb.add("s1", "select!", "$0");
-    ASSERT_EQ((int)node.bang_outputs.size(), 3);
-    ASSERT_EQ(node.bang_outputs[0]->name, "next");
-    ASSERT_EQ(node.bang_outputs[1]->name, "true");
-    ASSERT_EQ(node.bang_outputs[2]->name, "false");
+    ASSERT_EQ((int)node.nexts.size(), 3);
+    ASSERT_EQ(node.nexts[0]->name, "next");
+    ASSERT_EQ(node.nexts[1]->name, "true");
+    ASSERT_EQ(node.nexts[2]->name, "false");
 }
 
 TEST(select_bang_has_one_bang_input) {
     GraphBuilder gb;
     auto& node = gb.add("s1", "select!", "$0");
-    ASSERT_EQ((int)node.bang_inputs.size(), 1);
+    ASSERT_EQ((int)node.triggers.size(), 1);
 }
 
 TEST(select_bang_has_condition_input) {
@@ -4220,9 +4220,9 @@ TEST(select_bang_next_fires_after_branches) {
     // Verify next (bang_outputs[0]) is separate from true/false
     GraphBuilder gb;
     auto& node = gb.add("s1", "select!", "$0");
-    ASSERT(node.bang_outputs[0]->id != node.bang_outputs[1]->id);
-    ASSERT(node.bang_outputs[0]->id != node.bang_outputs[2]->id);
-    ASSERT(node.bang_outputs[1]->id != node.bang_outputs[2]->id);
+    ASSERT(node.nexts[0]->id != node.nexts[1]->id);
+    ASSERT(node.nexts[0]->id != node.nexts[2]->id);
+    ASSERT(node.nexts[1]->id != node.nexts[2]->id);
 }
 
 // ============================================================
