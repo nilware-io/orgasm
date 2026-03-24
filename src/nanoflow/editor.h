@@ -41,7 +41,7 @@ struct TabState {
 
     // Clipboard
     struct ClipboardNode {
-        std::string type, args;
+        NodeTypeID type_id; std::string args;
         ImVec2 offset; // relative to centroid
     };
     struct ClipboardLink {

@@ -82,7 +82,7 @@ void GraphInference::clear_all(FlowGraph& graph) {
 void GraphInference::build_registry(FlowGraph& graph) {
     registry.clear();
     for (auto& node : graph.nodes) {
-        if (node.type != "decl_type") continue;
+        if (node.type_id != NodeTypeID::DeclType) continue;
         auto tokens = tokenize_args(node.args, false);
         if (tokens.size() < 2) continue;
         std::string def;
@@ -109,7 +109,7 @@ void GraphInference::build_context(FlowGraph& graph) {
     ctx.named_types.clear();
 
     for (auto& node : graph.nodes) {
-        if (node.type == "decl_var") {
+        if (node.type_id == NodeTypeID::DeclVar) {
             auto tokens = tokenize_args(node.args, false);
             if (tokens.size() >= 2) {
                 // Join all tokens after the name as the type (handles "map<u32, f32>")
@@ -124,7 +124,7 @@ void GraphInference::build_context(FlowGraph& graph) {
     }
     // Register FFI functions as global variables with function types
     for (auto& node : graph.nodes) {
-        if (node.type == "ffi") {
+        if (node.type_id == NodeTypeID::Ffi) {
             auto tokens = tokenize_args(node.args, false);
             if (tokens.size() >= 2) {
                 std::string type_str;
@@ -142,7 +142,7 @@ void GraphInference::build_context(FlowGraph& graph) {
                 node.error = "ffi: requires <name> <function_type>";
             }
         }
-        if (node.type == "decl_import") {
+        if (node.type_id == NodeTypeID::DeclImport) {
             auto tokens = tokenize_args(node.args, false);
             if (tokens.empty()) {
                 node.error = "decl_import: requires a path (e.g. std/math)";
@@ -152,7 +152,7 @@ void GraphInference::build_context(FlowGraph& graph) {
         }
     }
     for (auto& node : graph.nodes) {
-        if (node.type != "decl_type") continue;
+        if (node.type_id != NodeTypeID::DeclType) continue;
         auto tokens = tokenize_args(node.args, false);
         if (tokens.size() < 2) continue;
         auto fields = parse_type_fields(node);
@@ -203,28 +203,28 @@ bool GraphInference::propagate_connections(FlowGraph& graph) {
 bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
     bool changed = false;
     for (auto& node : graph.nodes) {
-        bool is_expr = (node.type == "expr" || node.type == "expr!");
-        auto* nt = find_node_type(node.type.c_str());
+        bool is_expr = is_any_of(node.type_id, NodeTypeID::Expr, NodeTypeID::ExprBang);
+        auto* nt = find_node_type(node.type_id);
 
         // Skip nodes that don't have inline expressions:
         // - declarations (decl_type, decl_var, etc.)
         // - type-based nodes where args are type names, not expressions (new, event!)
         // - nodes with no args
-        bool needs_type_propagation = (node.type == "dup" || node.type == "select" || node.type == "next" || node.type == "void" || node.type == "discard" || node.type == "str");
+        bool needs_type_propagation = is_any_of(node.type_id, NodeTypeID::Dup, NodeTypeID::Select, NodeTypeID::Next, NodeTypeID::Void, NodeTypeID::Discard, NodeTypeID::Str);
         bool has_custom_output = needs_type_propagation ||
-            node.type == "append!" || node.type == "erase" || node.type == "erase!" ||
-            node.type == "decl_local" || node.type == "call" || node.type == "call!" ||
-            node.type == "cast";
+            is_any_of(node.type_id, NodeTypeID::AppendBang, NodeTypeID::Erase, NodeTypeID::EraseBang,
+            NodeTypeID::DeclLocal, NodeTypeID::Call, NodeTypeID::CallBang,
+            NodeTypeID::Cast);
         if (!is_expr) {
             if (!nt || nt->is_declaration) continue;
-            if (node.type == "new" || node.type == "event!") continue;
-            if (node.type == "label") continue;
+            if (is_any_of(node.type_id, NodeTypeID::New, NodeTypeID::EventBang)) continue;
+            if (node.type_id == NodeTypeID::Label) continue;
             if (node.args.empty() && !needs_type_propagation && !has_custom_output) continue;
             if (nt->inputs == 0 && !needs_type_propagation && !has_custom_output) continue;
         }
 
         // Skip expression parsing for nodes whose args aren't expressions
-        bool skip_expr_parse = (node.type == "decl_local" || node.type == "void" || node.type == "cast");
+        bool skip_expr_parse = is_any_of(node.type_id, NodeTypeID::DeclLocal, NodeTypeID::Void, NodeTypeID::Cast);
 
         // Parse expression(s) if not cached.
         // For expr nodes, each space-separated token is a separate expression/output.
@@ -291,7 +291,7 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
         // so that e.g. rand(200,12000) stored into f32 field resolves args as f32.
         // TODO: This backpropagation pattern should generalize to all assignment-like
         // contexts (e.g. struct field init in new, function call args), not just store.
-        if ((node.type == "store!" || node.type == "store") && node.parsed_exprs.size() >= 2) {
+        if (is_any_of(node.type_id, NodeTypeID::StoreBang, NodeTypeID::Store) && node.parsed_exprs.size() >= 2) {
             auto& target_expr = node.parsed_exprs[0];
             auto& value_expr = node.parsed_exprs[1];
             if (target_expr && value_expr && target_expr->resolved_type &&
@@ -314,7 +314,7 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
 
         // --- Passthrough nodes: propagate input type to output ---
 
-        if (node.type == "dup") {
+        if (node.type_id == NodeTypeID::Dup) {
             // dup: output = input type
             // Input can be from a connection OR from inline expression
             TypePtr input_type = nullptr;
@@ -333,21 +333,21 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
             }
         }
 
-        if (node.type == "void") {
+        if (node.type_id == NodeTypeID::Void) {
             if (!node.outputs.empty() && !node.outputs[0].resolved_type) {
                 node.outputs[0].resolved_type = pool.t_void;
                 changed = true;
             }
         }
 
-        if (node.type == "str") {
+        if (node.type_id == NodeTypeID::Str) {
             if (!node.outputs.empty() && !node.outputs[0].resolved_type) {
                 node.outputs[0].resolved_type = pool.intern("string");
                 changed = true;
             }
         }
 
-        if (node.type == "cast") {
+        if (node.type_id == NodeTypeID::Cast) {
             // Output type is the destination type from args
             if (!node.outputs.empty() && !node.outputs[0].resolved_type && !node.args.empty()) {
                 auto dest_type = pool.intern(node.args);
@@ -358,7 +358,7 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
             }
         }
 
-        if (node.type == "next") {
+        if (node.type_id == NodeTypeID::Next) {
             // next: input must be an iterator, output = same iterator type
             TypePtr input_type = nullptr;
             if (!node.inputs.empty() && node.inputs[0].resolved_type)
@@ -385,7 +385,7 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
             }
         }
 
-        if (node.type == "decl_local") {
+        if (node.type_id == NodeTypeID::DeclLocal) {
             // decl_local <name> <type>
             // Validate args: must have 2 tokens (name, type)
             auto tokens = tokenize_args(node.args, false);
@@ -443,7 +443,7 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
             }
         }
 
-        if (node.type == "select") {
+        if (node.type_id == NodeTypeID::Select) {
             // Resolve types from inline exprs or input pins
             auto get_arg_type = [&](int idx) -> TypePtr {
                 if (idx < (int)node.parsed_exprs.size() && node.parsed_exprs[idx] &&
@@ -492,7 +492,7 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
 
         // --- Node-specific validation ---
 
-        if ((node.type == "store!" || node.type == "store") && node.parsed_exprs.size() >= 2) {
+        if (is_any_of(node.type_id, NodeTypeID::StoreBang, NodeTypeID::Store) && node.parsed_exprs.size() >= 2) {
             // First arg must be an lvalue
             if (node.parsed_exprs[0] && !is_lvalue(node.parsed_exprs[0])) {
                 if (node.error.empty())
@@ -515,7 +515,7 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
 
         // For store!/store: if the value comes from as_lambda, set the value pin's
         // resolved_type to the target's function type so lambda validation can run
-        if ((node.type == "store!" || node.type == "store") && node.parsed_exprs.size() >= 1) {
+        if (is_any_of(node.type_id, NodeTypeID::StoreBang, NodeTypeID::Store) && node.parsed_exprs.size() >= 1) {
             auto& target_expr = node.parsed_exprs[0];
             if (target_expr && target_expr->resolved_type && !target_expr->resolved_type->is_generic) {
                 auto target_type = ctx.resolve_type(target_expr->resolved_type);
@@ -537,7 +537,7 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
             }
         }
 
-        if ((node.type == "erase" || node.type == "erase!") && node.parsed_exprs.size() >= 2) {
+        if (is_any_of(node.type_id, NodeTypeID::Erase, NodeTypeID::EraseBang) && node.parsed_exprs.size() >= 2) {
             auto& target_expr = node.parsed_exprs[0];
             auto& key_expr = node.parsed_exprs[1];
             if (target_expr && target_expr->resolved_type && !target_expr->resolved_type->is_generic) {
@@ -623,7 +623,7 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
             }
         }
 
-        if ((node.type == "iterate!" || node.type == "iterate") && node.parsed_exprs.size() >= 1) {
+        if (is_any_of(node.type_id, NodeTypeID::IterateBang, NodeTypeID::Iterate) && node.parsed_exprs.size() >= 1) {
             auto& target_expr = node.parsed_exprs[0];
             if (target_expr && target_expr->resolved_type && !target_expr->resolved_type->is_generic) {
                 auto target_resolved = ctx.resolve_type(target_expr->resolved_type);
@@ -693,14 +693,14 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
             }
         }
 
-        if ((node.type == "lock" || node.type == "lock!") && node.parsed_exprs.size() >= 1) {
+        if (is_any_of(node.type_id, NodeTypeID::Lock, NodeTypeID::LockBang) && node.parsed_exprs.size() >= 1) {
             auto& mutex_expr = node.parsed_exprs[0];
             if (mutex_expr && mutex_expr->resolved_type && !mutex_expr->resolved_type->is_generic) {
                 auto mutex_resolved = ctx.resolve_type(mutex_expr->resolved_type);
                 // Validate: first arg must be mutex (auto-decays to reference)
                 if (!mutex_resolved || mutex_resolved->kind != TypeKind::Mutex) {
                     if (node.error.empty())
-                        node.error = std::string(node.type) + ": first argument must be a mutex (got " +
+                        node.error = std::string(node_type_str(node.type_id)) + ": first argument must be a mutex (got " +
                             type_to_string(mutex_expr->resolved_type) + ")";
                 }
 
@@ -813,18 +813,18 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
             // Mutex must be an lvalue
             if (mutex_expr && !is_lvalue(mutex_expr)) {
                 if (node.error.empty())
-                    node.error = std::string(node.type) + ": mutex must be a variable reference";
+                    node.error = std::string(node_type_str(node.type_id)) + ": mutex must be a variable reference";
             }
         }
 
-        if ((node.type == "call" || node.type == "call!") && node.parsed_exprs.size() >= 1) {
+        if (is_any_of(node.type_id, NodeTypeID::Call, NodeTypeID::CallBang) && node.parsed_exprs.size() >= 1) {
             // First arg is the function reference
             auto& fn_expr = node.parsed_exprs[0];
             if (fn_expr && fn_expr->resolved_type && !fn_expr->resolved_type->is_generic) {
                 auto fn_resolved = ctx.resolve_type(fn_expr->resolved_type);
                 if (!fn_resolved || fn_resolved->kind != TypeKind::Function) {
                     if (node.error.empty())
-                        node.error = std::string(node.type) + ": first argument must be a function (got " +
+                        node.error = std::string(node_type_str(node.type_id)) + ": first argument must be a function (got " +
                             type_to_string(fn_expr->resolved_type) + ")";
                 } else {
                     // Set input pin types from function args.
@@ -884,7 +884,7 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
                     int total_args = num_inline_args + (int)node.inputs.size() - (int)scan_slots(node.args).slots.size();
                     if (total_args > expected_args) {
                         if (node.error.empty())
-                            node.error = std::string(node.type) + ": too many arguments (" +
+                            node.error = std::string(node_type_str(node.type_id)) + ": too many arguments (" +
                                 std::to_string(total_args) + " given, " +
                                 std::to_string(expected_args) + " expected)";
                     }
@@ -896,7 +896,7 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
                             fn_resolved->func_args[j-1].type && !fn_resolved->func_args[j-1].type->is_generic) {
                             if (!types_compatible(arg_expr->resolved_type, fn_resolved->func_args[j-1].type)) {
                                 if (node.error.empty())
-                                    node.error = std::string(node.type) + ": argument '" +
+                                    node.error = std::string(node_type_str(node.type_id)) + ": argument '" +
                                         fn_resolved->func_args[j-1].name + "' type mismatch: " +
                                         type_to_string(arg_expr->resolved_type) + " vs expected " +
                                         type_to_string(fn_resolved->func_args[j-1].type);
@@ -907,7 +907,7 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
             }
         }
 
-        if ((node.type == "append!" || node.type == "append") && node.parsed_exprs.size() >= 1) {
+        if (is_any_of(node.type_id, NodeTypeID::AppendBang, NodeTypeID::Append) && node.parsed_exprs.size() >= 1) {
             // First arg is the target collection
             auto& target_expr = node.parsed_exprs[0];
             if (target_expr && target_expr->resolved_type && !target_expr->resolved_type->is_generic) {
@@ -970,7 +970,7 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
             }
         }
 
-        if (node.type == "select!") {
+        if (node.type_id == NodeTypeID::SelectBang) {
             // Condition input must be bool
             auto get_cond_type = [&]() -> TypePtr {
                 if (!node.parsed_exprs.empty() && node.parsed_exprs[0] &&
@@ -990,7 +990,7 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
             }
         }
 
-        if (node.type == "output_mix!") {
+        if (node.type_id == NodeTypeID::OutputMixBang) {
             // Input must be f32
             auto get_input_type = [&]() -> TypePtr {
                 if (!node.parsed_exprs.empty() && node.parsed_exprs[0] &&

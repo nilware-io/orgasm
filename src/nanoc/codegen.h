@@ -77,7 +77,7 @@ struct CodeGenerator {
     void emit_node(FlowNode& node, std::ostringstream& out, int indent);
 
     // Node helpers
-    std::vector<FlowNode*> find_nodes(const std::string& type);
+    std::vector<FlowNode*> find_nodes(NodeTypeID type_id);
     FlowNode* find_node_by_guid(const std::string& guid);
     FlowNode* find_source_node(const std::string& to_pin_id);
     std::string find_source_pin(const std::string& to_pin_id);

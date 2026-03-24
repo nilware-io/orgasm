@@ -1,4 +1,5 @@
 #include "type_utils.h"
+#include "node_types.h"
 #include "types.h"
 #include <sstream>
 #include <map>
@@ -20,7 +21,7 @@ std::vector<TypeField> parse_type_fields(const FlowNode& type_node) {
 
 const FlowNode* find_type_node(const FlowGraph& graph, const std::string& type_name) {
     for (auto& n : graph.nodes) {
-        if (n.type != "decl_type") continue;
+        if (n.type_id != NodeTypeID::DeclType) continue;
         auto tokens = tokenize_args(n.args, false);
         if (!tokens.empty() && tokens[0] == type_name) return &n;
     }
@@ -31,7 +32,7 @@ const FlowNode* find_event_node(const FlowGraph& graph, const std::string& event
     std::string name = event_name;
     if (!name.empty() && name[0] == '~') name = name.substr(1);
     for (auto& n : graph.nodes) {
-        if (n.type != "decl_event") continue;
+        if (n.type_id != NodeTypeID::DeclEvent) continue;
         auto tokens = tokenize_args(n.args, false);
         if (!tokens.empty() && tokens[0] == name) return &n;
     }
@@ -134,7 +135,7 @@ void reconcile_pins(std::vector<FlowPin>& pins,
 
 void resolve_type_based_pins(FlowGraph& graph) {
     for (auto& node : graph.nodes) {
-        if (node.type == "new") {
+        if (node.type_id == NodeTypeID::New) {
             auto tokens = tokenize_args(node.args, false);
             std::string inst_type_name = tokens.empty() ? "" : tokens[0];
             auto* type_node = find_type_node(graph, inst_type_name);
@@ -149,7 +150,7 @@ void resolve_type_based_pins(FlowGraph& graph) {
                 node.rebuild_pin_ids();
             }
         }
-        if (node.type == "event!") {
+        if (node.type_id == NodeTypeID::EventBang) {
             auto tokens = tokenize_args(node.args, false);
             std::string event_name = tokens.empty() ? "" : tokens[0];
             auto* event_decl = find_event_node(graph, event_name);
@@ -162,7 +163,7 @@ void resolve_type_based_pins(FlowGraph& graph) {
                 node.rebuild_pin_ids();
             }
         }
-        if (node.type == "call" || node.type == "call!") {
+        if (is_any_of(node.type_id, NodeTypeID::Call, NodeTypeID::CallBang)) {
             auto tokens = tokenize_args(node.args, false);
             if (tokens.empty()) continue;
             // First token is the function reference (e.g. "$sin" or "$imgui_begin")
@@ -175,7 +176,7 @@ void resolve_type_based_pins(FlowGraph& graph) {
             TypePtr fn_type;
             TypePool pool;
             for (auto& other : graph.nodes) {
-                if (other.type == "ffi") {
+                if (other.type_id == NodeTypeID::Ffi) {
                     auto ftokens = tokenize_args(other.args, false);
                     if (!ftokens.empty() && ftokens[0] == fn_name) {
                         std::string type_str;
@@ -187,7 +188,7 @@ void resolve_type_based_pins(FlowGraph& graph) {
                         break;
                     }
                 }
-                if (other.type == "decl_var") {
+                if (other.type_id == NodeTypeID::DeclVar) {
                     auto ftokens = tokenize_args(other.args, false);
                     if (ftokens.size() >= 2 && ftokens[0] == fn_name) {
                         std::string type_str;

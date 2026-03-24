@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <random>
 #include <memory>
+#include "node_types.h"
 
 // Simple 2D vector (replaces Vec2 dependency)
 struct Vec2 { float x = 0, y = 0; };
@@ -37,7 +38,7 @@ struct FlowPin {
 struct FlowNode {
     int id = 0;                   // internal numeric id (for UI operations)
     std::string guid;             // unique identifier for serialization/connections
-    std::string type;             // node type (e.g. "expr", "decl_type", "decl_var")
+    NodeTypeID type_id = NodeTypeID::Unknown;  // node type enum
     std::string args;             // arguments string
     Vec2 position = {0, 0};     // canvas coordinates
     Vec2 size = {120, 60};      // computed during draw
@@ -75,7 +76,7 @@ struct FlowNode {
 
     // Display text for rendering inside the node: "type args"
     std::string display_text() const {
-        std::string s = type;
+        std::string s = node_type_str(type_id);
         if (!args.empty()) s += " " + args;
         return s;
     }

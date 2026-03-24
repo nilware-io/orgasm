@@ -75,7 +75,7 @@ int main(int argc, char* argv[]) {
     // Collect all errors: inference errors + per-node errors
     for (auto& node : graph.nodes) {
         if (!node.error.empty())
-            errors.push_back(node.type + " [" + node.guid.substr(0, 8) + "]: " + node.error);
+            errors.push_back(std::string(node_type_str(node.type_id)) + " [" + node.guid.substr(0, 8) + "]: " + node.error);
     }
 
     if (!errors.empty()) {

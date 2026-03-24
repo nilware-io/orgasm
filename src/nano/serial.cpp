@@ -113,13 +113,14 @@ bool load_nano(const std::string& path, FlowGraph& graph) {
         int default_bang_outputs = nt ? nt->bang_outputs : 0;
         int default_outputs = nt ? nt->outputs : 1;
 
-        bool is_expr = (cur_type == "expr" || cur_type == "expr!");
+        auto cur_type_id = node_type_id_from_string(cur_type.c_str());
+        bool is_expr = is_any_of(cur_type_id, NodeTypeID::Expr, NodeTypeID::ExprBang);
         int num_outputs = default_outputs;
 
         FlowNode node;
         node.id = graph.next_node_id();
         node.guid = cur_guid;
-        node.type = cur_type;
+        node.type_id = cur_type_id;
         node.args = args_str;
         node.position = {cur_x, cur_y};
 
@@ -127,7 +128,7 @@ bool load_nano(const std::string& path, FlowGraph& graph) {
             node.bang_inputs.push_back({"", "bang_in" + std::to_string(i), "", nullptr, FlowPin::BangInput});
 
         // Nodes whose args are type names, not expressions
-        bool args_are_type = (cur_type == "cast" || cur_type == "new");
+        bool args_are_type = is_any_of(cur_type_id, NodeTypeID::Cast, NodeTypeID::New);
 
         if (is_expr) {
             // Expr nodes: pin count from $N refs, output count from tokens
@@ -281,7 +282,7 @@ bool load_nano(const std::string& path, FlowGraph& graph) {
         // Collect all import paths first (avoid modifying graph while iterating)
         std::vector<std::string> import_paths;
         for (auto& node : graph.nodes) {
-            if (node.type != "decl_import") continue;
+            if (node.type_id != NodeTypeID::DeclImport) continue;
             auto tokens = tokenize_args(node.args, false);
             if (tokens.empty()) continue;
             std::string import_path = tokens[0];
@@ -307,7 +308,7 @@ bool load_nano(const std::string& path, FlowGraph& graph) {
                     load_nano(full.string(), temp);
                     // Merge only ffi and decl_type nodes (declarations) into main graph
                     for (auto& n : temp.nodes) {
-                        if (n.type == "ffi" || n.type == "decl_type") {
+                        if (is_any_of(n.type_id, NodeTypeID::Ffi, NodeTypeID::DeclType)) {
                             n.id = graph.next_node_id();
                             n.imported = true;
                             graph.nodes.push_back(std::move(n));
@@ -320,7 +321,7 @@ bool load_nano(const std::string& path, FlowGraph& graph) {
             if (!found) {
                 // Find the decl_import node to set the error on
                 for (auto& n : graph.nodes) {
-                    if (n.type == "decl_import") {
+                    if (n.type_id == NodeTypeID::DeclImport) {
                         auto t = tokenize_args(n.args, false);
                         if (!t.empty() && t[0] == import_path)
                             n.error = "decl_import: module not found: " + import_path;
@@ -358,7 +359,7 @@ void save_nano_stream(std::ostream& f, const FlowGraph& graph) {
         if (node.imported) continue; // Don't save imported nodes — they're loaded from nanostd
         f << "[[node]]\n";
         f << "guid = \"" << node.guid << "\"\n";
-        f << "type = \"" << node.type << "\"\n";
+        f << "type = \"" << node_type_str(node.type_id) << "\"\n";
 
         auto tokens = tokenize_args(node.args, false);
         if (!tokens.empty()) {
@@ -502,16 +503,17 @@ bool load_nano_string(const std::string& data, FlowGraph& graph) {
         auto* nt = find_node_type(cur_type.c_str());
         int dbi = nt ? nt->bang_inputs : 0, di = nt ? nt->inputs : 0;
         int dbo = nt ? nt->bang_outputs : 0, do_ = nt ? nt->outputs : 1;
-        bool is_expr = (cur_type == "expr" || cur_type == "expr!");
+        auto cur_type_id = node_type_id_from_string(cur_type.c_str());
+        bool is_expr = is_any_of(cur_type_id, NodeTypeID::Expr, NodeTypeID::ExprBang);
         int no = do_;
 
         FlowNode node;
         node.id = graph.next_node_id();
-        node.guid = cur_guid; node.type = cur_type; node.args = args_str;
+        node.guid = cur_guid; node.type_id = cur_type_id; node.args = args_str;
         node.position = {cur_x, cur_y};
         for (int i = 0; i < dbi; i++) node.bang_inputs.push_back({"","bang_in"+std::to_string(i), "", nullptr, FlowPin::BangInput});
 
-        bool args_are_type = (cur_type == "cast" || cur_type == "new");
+        bool args_are_type = is_any_of(cur_type_id, NodeTypeID::Cast, NodeTypeID::New);
 
         if (is_expr) {
             auto parsed = scan_slots(args_str);

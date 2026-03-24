@@ -41,7 +41,7 @@ static constexpr ImU32 COL_LINK_DRAG  = IM_COL32(255, 255, 150, 200);
 // Look up port description for a pin on a node.
 // Returns {port_name, port_desc} or {"", ""} if not found.
 static std::pair<std::string, std::string> get_port_desc(const FlowNode& node, const FlowPin& pin) {
-    auto* nt = find_node_type(node.type.c_str());
+    auto* nt = find_node_type(node.type_id);
     if (!nt) return {pin.name, ""};
 
     auto find_in = [&](const auto& pins, const PortDesc* descs, int count) -> std::pair<std::string, std::string> {
@@ -101,11 +101,6 @@ static float point_to_bezier_dist(ImVec2 p, ImVec2 p0, ImVec2 p1, ImVec2 p2, ImV
     return std::sqrt(min_d2);
 }
 
-// Pin shape: signal (~) = circle with ~, control (bang) = square
-static bool is_signal_node(const FlowNode& node) {
-    const auto& t = node.type;
-    return !t.empty() && t.back() == '~';
-}
 
 enum class PinShape { Square, Signal, LambdaDown, LambdaLeft };
 
@@ -407,12 +402,12 @@ FlowEditorWindow::PinHit FlowEditorWindow::hit_test_pin(ImVec2 sp, ImVec2 co, fl
             if (dist2(sp, get_pin_pos(node, pin, co)) < r2)
                 return {node.id, pin.id, FlowPin::BangOutput};
         if (!node.lambda_grab.id.empty() && dist2(sp, get_pin_pos(node, node.lambda_grab, co)) < r2) {
-            auto* nt_hit = find_node_type(node.type.c_str());
+            auto* nt_hit = find_node_type(node.type_id);
             if (nt_hit && nt_hit->has_lambda)
                 return {node.id, node.lambda_grab.id, FlowPin::LambdaGrab};
         }
         if (!node.bang_pin.id.empty() && dist2(sp, get_pin_pos(node, node.bang_pin, co)) < r2) {
-            auto* nt_hit = find_node_type(node.type.c_str());
+            auto* nt_hit = find_node_type(node.type_id);
             bool hidden = (nt_hit && (nt_hit->is_event || nt_hit->no_post_bang));
             if (!hidden) return {node.id, node.bang_pin.id, FlowPin::BangOutput};
         }
@@ -454,7 +449,7 @@ int FlowEditorWindow::hit_test_link(ImVec2 sp, ImVec2 co, float threshold) const
 }
 
 void FlowEditorWindow::draw_node(ImDrawList* dl, FlowNode& node, ImVec2 origin) {
-    bool is_label = (node.type == "label");
+    bool is_label = (node.type_id == NodeTypeID::Label);
 
     // Width from pins (top row = inputs + lambdas, bottom row = outputs)
     int top_pins = (int)(node.bang_inputs.size() + node.inputs.size());
@@ -525,7 +520,7 @@ void FlowEditorWindow::draw_node(ImDrawList* dl, FlowNode& node, ImVec2 origin) 
         }
     }
 
-    auto* nt = find_node_type(node.type.c_str());
+    auto* nt = find_node_type(node.type_id);
     bool is_structural = nt && nt->is_declaration;
     bool is_event = nt && nt->is_event;
 
@@ -1292,7 +1287,7 @@ void FlowEditorWindow::draw() {
                     auto& node = active().graph.nodes[i];
                     if (mc.x >= node.position.x && mc.x <= node.position.x + node.size.x &&
                         mc.y >= node.position.y && mc.y <= node.position.y + node.size.y) {
-                        auto* nt = find_node_type(node.type.c_str());
+                        auto* nt = find_node_type(node.type_id);
                         ImGui::BeginTooltip();
                         ImGui::SetWindowFontScale(active().canvas_zoom);
                         ImGui::TextUnformatted(node_display_name(node).c_str());
@@ -1435,7 +1430,7 @@ void FlowEditorWindow::draw() {
                 auto& node = *edit_node;
                 if (node.guid.empty())
                     node.guid = generate_guid();
-                node.type = node_type;
+                node.type_id = node_type_id_from_string(node_type.c_str());
                 node.args = rest_args;
                 creating_new_node_ = false;
 
@@ -1468,13 +1463,13 @@ void FlowEditorWindow::draw() {
                 };
 
                 int needed_outputs = default_outputs;
-                bool is_expr_type = (node.type == "expr" || node.type == "expr!");
+                bool is_expr_type = is_any_of(node.type_id, NodeTypeID::Expr, NodeTypeID::ExprBang);
 
                 // Build desired input pin list (data + lambda unified, in slot order)
                 struct DesiredPin { std::string name; FlowPin::Direction dir; };
                 std::vector<DesiredPin> desired_inputs;
 
-                if (node.type == "new") {
+                if (node.type_id == NodeTypeID::New) {
                     auto tokens = tokenize_args(rest_args, false);
                     std::string inst_type_name = tokens.empty() ? "" : tokens[0];
                     auto* type_node = find_type_node(active().graph, inst_type_name);
@@ -1484,7 +1479,7 @@ void FlowEditorWindow::draw() {
                             desired_inputs.push_back({field.name, FlowPin::Input});
                     }
                     needed_outputs = 1;
-                } else if (node.type == "event!") {
+                } else if (node.type_id == NodeTypeID::EventBang) {
                     // Outputs come from event declaration args
                     auto tokens = tokenize_args(rest_args, false);
                     std::string event_name = tokens.empty() ? "" : tokens[0];
@@ -1658,7 +1653,7 @@ void FlowEditorWindow::draw() {
     for (auto& node : active().graph.nodes) {
         if (node.error.empty()) continue;
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 100, 100, 255));
-        std::string label = node.type + " [" + node.guid.substr(0, 8) + "]: " + node.error;
+        std::string label = std::string(node_type_str(node.type_id)) + " [" + node.guid.substr(0, 8) + "]: " + node.error;
         if (ImGui::Selectable(label.c_str())) {
             center_on_node(node, {canvas_w, canvas_h});
         }
@@ -1703,7 +1698,7 @@ void FlowEditorWindow::draw() {
 
     // Local declarations (non-imported)
     for (auto& node : active().graph.nodes) {
-        auto* nt_decl = find_node_type(node.type.c_str());
+        auto* nt_decl = find_node_type(node.type_id);
         if (!nt_decl || !nt_decl->is_declaration) continue;
         if (node.imported) continue;
         bool has_err = !node.error.empty();
@@ -1722,14 +1717,14 @@ void FlowEditorWindow::draw() {
     // Imported declarations grouped by import source
     // Collect unique import paths
     for (auto& imp_node : active().graph.nodes) {
-        if (imp_node.type != "decl_import") continue;
+        if (imp_node.type_id != NodeTypeID::DeclImport) continue;
         auto tokens = tokenize_args(imp_node.args, false);
         if (tokens.empty()) continue;
         std::string label = tokens[0]; // e.g. "std/imgui"
         if (ImGui::TreeNode(label.c_str())) {
             for (auto& node : active().graph.nodes) {
                 if (!node.imported) continue;
-                auto* nt_decl = find_node_type(node.type.c_str());
+                auto* nt_decl = find_node_type(node.type_id);
                 if (!nt_decl || !nt_decl->is_declaration) continue;
                 ImGui::TextDisabled("%s", node.display_text().c_str());
             }
@@ -1750,7 +1745,7 @@ void FlowEditorWindow::validate_nodes() {
     // Build type registry from decl_type nodes
     TypeRegistry registry;
     for (auto& node : active().graph.nodes) {
-        if (node.type == "decl_type") {
+        if (node.type_id == NodeTypeID::DeclType) {
             auto tokens = tokenize_args(node.args, false);
             if (tokens.size() >= 2) {
                 // First token is the type name, rest is the definition
@@ -1778,9 +1773,9 @@ void FlowEditorWindow::validate_nodes() {
     for (auto& node : active().graph.nodes) {
         node.error.clear();
 
-        auto* nt = find_node_type(node.type.c_str());
+        auto* nt = find_node_type(node.type_id);
         if (!nt) {
-            node.error = "Unknown node type: " + node.type;
+            node.error = "Unknown node type: " + std::string(node_type_str(node.type_id));
             continue;
         }
 
@@ -1794,7 +1789,7 @@ void FlowEditorWindow::validate_nodes() {
         if (!node.error.empty()) continue;
 
         // Validate decl_type nodes
-        if (node.type == "decl_type") {
+        if (node.type_id == NodeTypeID::DeclType) {
             auto tokens = tokenize_args(node.args, false);
             if (tokens.empty()) {
                 node.error = "decl_type requires a type name";
@@ -1845,7 +1840,7 @@ void FlowEditorWindow::validate_nodes() {
         }
 
         // Validate decl_var nodes: decl_var <name> <type>
-        if (node.type == "decl_var") {
+        if (node.type_id == NodeTypeID::DeclVar) {
             auto tokens = tokenize_args(node.args, false);
             if (tokens.size() < 2) {
                 node.error = "decl_var requires: name type";
@@ -1865,7 +1860,7 @@ void FlowEditorWindow::validate_nodes() {
 
 
         // Validate 'new' nodes — type must exist
-        if (node.type == "new") {
+        if (node.type_id == NodeTypeID::New) {
             auto tokens = tokenize_args(node.args, false);
             if (tokens.empty()) {
                 node.error = "new requires a type name";
@@ -1877,7 +1872,7 @@ void FlowEditorWindow::validate_nodes() {
         }
 
         // Validate event! nodes — must reference a valid decl_event with ~ prefix, return must be void
-        if (node.type == "event!") {
+        if (node.type_id == NodeTypeID::EventBang) {
             auto tokens = tokenize_args(node.args, false);
             if (tokens.empty()) {
                 node.error = "event! requires an event name (e.g. ~my_event)";
@@ -1947,7 +1942,7 @@ void FlowEditorWindow::copy_selection() {
         if (!active().selected_nodes.count(node.id)) continue;
         int idx = (int)active().clipboard_nodes.size();
         id_to_idx[node.id] = idx;
-        active().clipboard_nodes.push_back({node.type, node.args,
+        active().clipboard_nodes.push_back({node.type_id, node.args,
             {node.position.x - centroid.x, node.position.y - centroid.y}});
     }
 
@@ -1991,11 +1986,11 @@ void FlowEditorWindow::paste_at(ImVec2 canvas_pos) {
         // Set type and args, rebuild pins
         for (auto& node : active().graph.nodes) {
             if (node.id != id) continue;
-            node.type = cn.type;
+            node.type_id = cn.type_id;
             node.args = cn.args;
 
             // Rebuild pins from type descriptor
-            auto* nt = find_node_type(cn.type.c_str());
+            auto* nt = find_node_type(cn.type_id);
             if (nt) {
                 node.bang_inputs.clear();
                 node.inputs.clear();
@@ -2005,7 +2000,7 @@ void FlowEditorWindow::paste_at(ImVec2 canvas_pos) {
                 for (int i = 0; i < nt->bang_inputs; i++)
                     node.bang_inputs.push_back({"", "bang_in" + std::to_string(i), "", nullptr, FlowPin::BangInput});
 
-                bool is_expr_paste = (cn.type == "expr" || cn.type == "expr!");
+                bool is_expr_paste = is_any_of(cn.type_id, NodeTypeID::Expr, NodeTypeID::ExprBang);
                 int num_outputs = nt->outputs;
                 if (is_expr_paste) {
                     auto parsed = scan_slots(cn.args);

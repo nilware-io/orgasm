@@ -437,7 +437,7 @@ std::string CodeGenerator::resolve_pin_value(FlowNode& node, int pin_index) {
     // Check if connected
     std::string source_pin = find_source_pin(pin.id);
     if (source_pin.empty()) {
-        throw std::runtime_error("codegen: unconnected pin " + pin.id + " on node " + node.type + " [" + node.guid.substr(0,8) + "]");
+        throw std::runtime_error("codegen: unconnected pin " + pin.id + " on node " + std::string(node_type_str(node.type_id)) + " [" + node.guid.substr(0,8) + "]");
     }
 
     // Check if we already know the value for this source pin
@@ -454,7 +454,7 @@ std::string CodeGenerator::resolve_pin_value(FlowNode& node, int pin_index) {
     std::string pin_name = (dot != std::string::npos) ? source_pin.substr(dot + 1) : source_pin;
 
     // If source is an event output, use the parameter name directly
-    if (source_node->type == "event!") {
+    if (source_node->type_id == NodeTypeID::EventBang) {
         pin_to_value[source_pin] = pin_name;
         return pin_name;
     }
@@ -466,7 +466,7 @@ std::string CodeGenerator::resolve_pin_value(FlowNode& node, int pin_index) {
         if (it2 != pin_to_value.end()) return it2->second;
     }
 
-    throw std::runtime_error("codegen: cannot resolve pin value from " + source_node->type +
+    throw std::runtime_error("codegen: cannot resolve pin value from " + std::string(node_type_str(source_node->type_id)) +
                            " [" + source_node->guid.substr(0, 8) + "] pin " + pin_name +
                            " (not materialized — needs pre-materialization in calling context)");
 }
@@ -480,7 +480,7 @@ std::string CodeGenerator::resolve_inline_arg(FlowNode& node, int arg_index) {
     // The pin index depends on how many inline args filled descriptor slots.
     // Inline args fill descriptor inputs left-to-right.
     // Remaining descriptor inputs become pins, indexed after any $N ref pins.
-    auto* nt = find_node_type(node.type.c_str());
+    auto* nt = find_node_type(node.type_id);
     int descriptor_inputs = nt ? nt->inputs : 0;
     auto info = compute_inline_args(node.args, descriptor_inputs);
     int ref_pins = (info.pin_slots.max_slot >= 0) ? (info.pin_slots.max_slot + 1) : 0;
@@ -496,7 +496,7 @@ std::string CodeGenerator::resolve_inline_arg(FlowNode& node, int arg_index) {
         if (!src.empty()) {
             // Try to materialize the source node if not yet done
             auto* src_node = find_source_node(node.inputs[pin_index].id);
-            if (src_node && !materialized.count(src_node->guid) && src_node->type != "event!" && current_out_) {
+            if (src_node && !materialized.count(src_node->guid) && src_node->type_id != NodeTypeID::EventBang && current_out_) {
                 materialize_node(*src_node, *current_out_, current_indent_);
             }
             auto it = pin_to_value.find(src);
@@ -512,7 +512,7 @@ std::string CodeGenerator::resolve_inline_arg(FlowNode& node, int arg_index) {
                 std::string src = find_source_pin(inp.id);
                 if (!src.empty()) {
                     auto* src_node = find_source_node(inp.id);
-                    if (src_node && !materialized.count(src_node->guid) && src_node->type != "event!" && current_out_) {
+                    if (src_node && !materialized.count(src_node->guid) && src_node->type_id != NodeTypeID::EventBang && current_out_) {
                         materialize_node(*src_node, *current_out_, current_indent_);
                     }
                     auto it = pin_to_value.find(src);
@@ -522,7 +522,7 @@ std::string CodeGenerator::resolve_inline_arg(FlowNode& node, int arg_index) {
         }
     }
 
-    throw std::runtime_error("codegen: missing arg " + std::to_string(arg_index) + " on node " + node.type + " [" + node.guid.substr(0, 8) + "]");
+    throw std::runtime_error("codegen: missing arg " + std::to_string(arg_index) + " on node " + std::string(node_type_str(node.type_id)) + " [" + node.guid.substr(0, 8) + "]");
 }
 
 // --- Materialize a data-producing node as a local variable ---
@@ -541,7 +541,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
 
     std::string ind = indent_str(indent);
 
-    if (node.type == "expr" || node.type == "expr!") {
+    if (is_any_of(node.type_id, NodeTypeID::Expr, NodeTypeID::ExprBang)) {
         // Materialize each output as a local variable
         // First materialize any data dependencies
         for (auto& inp : node.inputs) {
@@ -549,7 +549,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
             if (!src.empty()) {
                 auto* src_node = find_source_node(inp.id);
                 if (src_node && !materialized.count(src_node->guid) &&
-                    src_node->type != "event!" && src_node->type != "dup" && src_node->type != "next") {
+                    !is_any_of(src_node->type_id, NodeTypeID::EventBang, NodeTypeID::Dup, NodeTypeID::Next)) {
                     materialize_node(*src_node, out, indent);
                 }
             }
@@ -580,7 +580,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
         return pin_to_value.count(node.outputs[0].id) ? pin_to_value[node.outputs[0].id] : "/* no output */";
     }
 
-    if (node.type == "dup") {
+    if (node.type_id == NodeTypeID::Dup) {
         // Dup: output = input, just alias
         if (!node.inputs.empty()) {
             // Check if the input pin itself is already registered (lambda parameter)
@@ -594,7 +594,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
             std::string src = find_source_pin(node.inputs[0].id);
             if (!src.empty()) {
                 auto* src_node = find_source_node(node.inputs[0].id);
-                if (src_node && !materialized.count(src_node->guid) && src_node->type != "event!") {
+                if (src_node && !materialized.count(src_node->guid) && src_node->type_id != NodeTypeID::EventBang) {
                     materialize_node(*src_node, out, indent);
                 }
                 auto it = pin_to_value.find(src);
@@ -608,7 +608,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
         throw std::runtime_error("codegen: dup node " + node.guid + " has no connected input or registered value");
     }
 
-    if (node.type == "str") {
+    if (node.type_id == NodeTypeID::Str) {
         // Materialize input, wrap in std::to_string
         std::string input_val;
         if (!node.inputs.empty()) {
@@ -619,7 +619,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
                 std::string src = find_source_pin(node.inputs[0].id);
                 if (!src.empty()) {
                     auto* src_node = find_source_node(node.inputs[0].id);
-                    if (src_node && !materialized.count(src_node->guid) && src_node->type != "event!")
+                    if (src_node && !materialized.count(src_node->guid) && src_node->type_id != NodeTypeID::EventBang)
                         materialize_node(*src_node, out, indent);
                     auto it = pin_to_value.find(src);
                     if (it != pin_to_value.end()) input_val = it->second;
@@ -640,7 +640,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
         return var;
     }
 
-    if (node.type == "decl_local") {
+    if (node.type_id == NodeTypeID::DeclLocal) {
         // decl_local is emitted via emit_node in bang chain.
         // If materialized, the variable was already declared — just return its name.
         auto tokens = tokenize_args(node.args, false);
@@ -653,7 +653,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
         throw std::runtime_error("codegen: decl_local has no name");
     }
 
-    if (node.type == "next") {
+    if (node.type_id == NodeTypeID::Next) {
         // next: output = std::next(input)
         if (!node.inputs.empty()) {
             auto pin_it = pin_to_value.find(node.inputs[0].id);
@@ -667,7 +667,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
             std::string src = find_source_pin(node.inputs[0].id);
             if (!src.empty()) {
                 auto* src_node = find_source_node(node.inputs[0].id);
-                if (src_node && !materialized.count(src_node->guid) && src_node->type != "event!") {
+                if (src_node && !materialized.count(src_node->guid) && src_node->type_id != NodeTypeID::EventBang) {
                     materialize_node(*src_node, out, indent);
                 }
                 auto it = pin_to_value.find(src);
@@ -683,7 +683,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
         throw std::runtime_error("codegen: next node " + node.guid + " has no connected input");
     }
 
-    if (node.type == "lock") {
+    if (node.type_id == NodeTypeID::Lock) {
         std::string mutex_var = resolve_inline_arg(node, 0);
         std::string lock_var = fresh_var("lock_guard");
 
@@ -800,14 +800,14 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
         return "/* lock void */";
     }
 
-    if (node.type == "cast") {
+    if (node.type_id == NodeTypeID::Cast) {
         // Cast node: currently only supports array -> vector
         // Materialize input dependency
         if (!node.inputs.empty()) {
             std::string src = find_source_pin(node.inputs[0].id);
             if (!src.empty()) {
                 auto* src_node = find_source_node(node.inputs[0].id);
-                if (src_node && !materialized.count(src_node->guid) && src_node->type != "event!") {
+                if (src_node && !materialized.count(src_node->guid) && src_node->type_id != NodeTypeID::EventBang) {
                     materialize_node(*src_node, out, indent);
                 }
             }
@@ -827,7 +827,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
         return var;
     }
 
-    if (node.type == "new") {
+    if (node.type_id == NodeTypeID::New) {
         // Materialize non-lambda dependencies first
         // Skip inputs connected via as_lambda (those are handled as inline lambdas below)
         for (auto& inp : node.inputs) {
@@ -836,7 +836,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
             // Check if source is an as_lambda pin
             if (src.find(".as_lambda") != std::string::npos) continue;
             auto* src_node = find_source_node(inp.id);
-            if (src_node && !materialized.count(src_node->guid) && src_node->type != "event!") {
+            if (src_node && !materialized.count(src_node->guid) && src_node->type_id != NodeTypeID::EventBang) {
                 materialize_node(*src_node, out, indent);
             }
         }
@@ -950,7 +950,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
                         // Emit lambda body
                         // If the root is a data-producing node, materialize it
                         // If it's a bang node (store!, etc.), emit it as a statement
-                        auto* root_nt = find_node_type(src_node->type.c_str());
+                        auto* root_nt = find_node_type(src_node->type_id);
                         bool is_bang_root = root_nt && (root_nt->bang_inputs > 0 || root_nt->bang_outputs > 0);
 
                         std::string result;
@@ -989,13 +989,13 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
         return var;
     }
 
-    if (node.type == "select") {
+    if (node.type_id == NodeTypeID::Select) {
         // Materialize condition dependency only (not branches — they may have side effects)
         if (!node.inputs.empty()) {
             std::string src = find_source_pin(node.inputs[0].id);
             if (!src.empty()) {
                 auto* src_node = find_source_node(node.inputs[0].id);
-                if (src_node && !materialized.count(src_node->guid) && src_node->type != "event!") {
+                if (src_node && !materialized.count(src_node->guid) && src_node->type_id != NodeTypeID::EventBang) {
                     materialize_node(*src_node, out, indent);
                 }
             }
@@ -1029,7 +1029,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
             std::string src = find_source_pin(inp.id);
             if (!src.empty() && pin_to_value.find(src) == pin_to_value.end()) {
                 auto* src_node = find_source_node(inp.id);
-                if (src_node && !materialized.count(src_node->guid) && src_node->type != "event!") {
+                if (src_node && !materialized.count(src_node->guid) && src_node->type_id != NodeTypeID::EventBang) {
                     // Only materialize in true branch if referenced by arg 1
                     // We'll let resolve handle it — just ensure it's available
                 }
@@ -1045,7 +1045,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
                     std::string src = find_source_pin(node.inputs[e->pin_ref.index].id);
                     if (!src.empty() && pin_to_value.find(src) == pin_to_value.end()) {
                         auto* src_node = find_source_node(node.inputs[e->pin_ref.index].id);
-                        if (src_node && !materialized.count(src_node->guid) && src_node->type != "event!")
+                        if (src_node && !materialized.count(src_node->guid) && src_node->type_id != NodeTypeID::EventBang)
                             materialize_node(*src_node, out, indent + 1);
                     }
                 }
@@ -1074,7 +1074,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
                     std::string src = find_source_pin(node.inputs[e->pin_ref.index].id);
                     if (!src.empty() && pin_to_value.find(src) == pin_to_value.end()) {
                         auto* src_node = find_source_node(node.inputs[e->pin_ref.index].id);
-                        if (src_node && !materialized.count(src_node->guid) && src_node->type != "event!")
+                        if (src_node && !materialized.count(src_node->guid) && src_node->type_id != NodeTypeID::EventBang)
                             materialize_node(*src_node, false_out, indent + 1);
                     }
                 }
@@ -1113,7 +1113,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
         return var;
     }
 
-    if (node.type == "append") {
+    if (node.type_id == NodeTypeID::Append) {
         // Non-bang append, returns iterator to appended item
         std::string target = resolve_inline_arg(node, 0);
         std::string value = resolve_inline_arg(node, 1);
@@ -1131,7 +1131,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
         return var;
     }
 
-    if (node.type == "iterate") {
+    if (node.type_id == NodeTypeID::Iterate) {
         // Non-bang iterate — same loop logic as iterate! but materialized as a data node
         std::string collection = resolve_inline_arg(node, 0);
         std::string it_var = fresh_var("it");
@@ -1194,7 +1194,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
         return "void()";
     }
 
-    if (node.type == "call") {
+    if (node.type_id == NodeTypeID::Call) {
         // Non-bang call: resolve function ref and args
         std::string fn_name = resolve_inline_arg(node, 0);
         std::ostringstream call_expr;
@@ -1254,7 +1254,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
         }
     }
 
-    if (node.type == "lock!") {
+    if (node.type_id == NodeTypeID::LockBang) {
         // lock! is a bang node but may be reached via data dependency (when it has an output)
         // Delegate to emit_node which handles the full lock! logic
         emit_node(node, out, indent);
@@ -1265,7 +1265,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
         return "void()";
     }
 
-    if (node.type == "store") {
+    if (node.type_id == NodeTypeID::Store) {
         std::string target = resolve_inline_arg(node, 0);
 
         // Check if value comes from as_lambda (stored lambda)
@@ -1293,7 +1293,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
         return "void()";
     }
 
-    if (node.type == "void") {
+    if (node.type_id == NodeTypeID::Void) {
         // No-op, returns void
         for (auto& o : node.outputs)
             pin_to_value[o.id] = "void()";
@@ -1306,7 +1306,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
         return "void()";
     }
 
-    if (node.type == "discard") {
+    if (node.type_id == NodeTypeID::Discard) {
         // Evaluate inputs but discard — just materialize dependencies for side effects
         for (auto& inp : node.inputs) {
             std::string src = find_source_pin(inp.id);
@@ -1323,7 +1323,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
         return "void()";
     }
 
-    if (node.type == "erase") {
+    if (node.type_id == NodeTypeID::Erase) {
         // Non-bang erase, returns iterator
         std::string target = resolve_inline_arg(node, 0);
         std::string key = resolve_inline_arg(node, 1);
@@ -1334,7 +1334,7 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
         return var;
     }
 
-    if (node.type == "call!" || node.type == "call") {
+    if (is_any_of(node.type_id, NodeTypeID::CallBang, NodeTypeID::Call)) {
         // Bang call nodes with outputs (e.g. imgui_slider_int returns bool):
         // delegate to emit_node which handles call! and sets pin_to_value for outputs.
         emit_node(node, out, indent);
@@ -1343,15 +1343,15 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
         throw std::runtime_error("codegen: call node " + node.guid.substr(0, 8) + " materialized but produced no output");
     }
 
-    throw std::runtime_error("codegen: cannot materialize node type " + node.type + " [" + node.guid.substr(0, 8) + "]");
+    throw std::runtime_error("codegen: cannot materialize node type " + std::string(node_type_str(node.type_id)) + " [" + node.guid.substr(0, 8) + "]");
 }
 
 // --- Node helpers ---
 
-std::vector<FlowNode*> CodeGenerator::find_nodes(const std::string& type) {
+std::vector<FlowNode*> CodeGenerator::find_nodes(NodeTypeID type_id) {
     std::vector<FlowNode*> result;
     for (auto& n : graph.nodes)
-        if (n.type == type) result.push_back(&n);
+        if (n.type_id == type_id) result.push_back(&n);
     return result;
 }
 
@@ -1405,7 +1405,7 @@ std::string CodeGenerator::generate_types() {
     out << "// Generated types from " << source_name << ".nano\n\n";
 
     // Forward declarations
-    for (auto* node : find_nodes("decl_type")) {
+    for (auto* node : find_nodes(NodeTypeID::DeclType)) {
         auto tokens = tokenize_args(node->args, false);
         if (tokens.empty()) continue;
         if (classify_decl_type(tokens) == 2)
@@ -1414,7 +1414,7 @@ std::string CodeGenerator::generate_types() {
     out << "\n";
 
     // Aliases and function types first
-    for (auto* node : find_nodes("decl_type")) {
+    for (auto* node : find_nodes(NodeTypeID::DeclType)) {
         auto tokens = tokenize_args(node->args, false);
         if (tokens.empty()) continue;
         int cls = classify_decl_type(tokens);
@@ -1430,7 +1430,7 @@ std::string CodeGenerator::generate_types() {
     out << "\n";
 
     // Struct definitions
-    for (auto* node : find_nodes("decl_type")) {
+    for (auto* node : find_nodes(NodeTypeID::DeclType)) {
         auto tokens = tokenize_args(node->args, false);
         if (tokens.empty()) continue;
         if (classify_decl_type(tokens) != 2) continue;
@@ -1453,7 +1453,7 @@ std::string CodeGenerator::generate_header() {
     out << "#include \"" << source_name << "_types.h\"\n\n";
     out << "// Generated program from " << source_name << ".nano\n\n";
 
-    for (auto* node : find_nodes("decl_var")) {
+    for (auto* node : find_nodes(NodeTypeID::DeclVar)) {
         auto tokens = tokenize_args(node->args, false);
         if (tokens.size() < 2) continue;
         std::string type_str;
@@ -1466,7 +1466,7 @@ std::string CodeGenerator::generate_header() {
     out << "\n";
 
     // FFI declarations
-    for (auto* node : find_nodes("ffi")) {
+    for (auto* node : find_nodes(NodeTypeID::Ffi)) {
         auto tokens = tokenize_args(node->args, false);
         if (tokens.size() < 2) continue;
         std::string type_str;
@@ -1487,7 +1487,7 @@ std::string CodeGenerator::generate_header() {
     }
     out << "\n";
 
-    for (auto* node : find_nodes("decl_event")) {
+    for (auto* node : find_nodes(NodeTypeID::DeclEvent)) {
         auto tokens = tokenize_args(node->args, false);
         if (tokens.empty()) continue;
         auto args = parse_event_args(*node, graph);
@@ -1510,7 +1510,7 @@ std::string CodeGenerator::generate_impl() {
     out << "#include \"" << source_name << "_program.h\"\n\n";
 
     // Global variable definitions
-    for (auto* node : find_nodes("decl_var")) {
+    for (auto* node : find_nodes(NodeTypeID::DeclVar)) {
         auto tokens = tokenize_args(node->args, false);
         if (tokens.size() < 2) continue;
         std::string type_str;
@@ -1523,7 +1523,7 @@ std::string CodeGenerator::generate_impl() {
     out << "\n";
 
     // Event handlers
-    for (auto* event_node : find_nodes("event!")) {
+    for (auto* event_node : find_nodes(NodeTypeID::EventBang)) {
         auto tokens = tokenize_args(event_node->args, false);
         if (tokens.empty()) continue;
         std::string event_name = tokens[0];
@@ -1595,13 +1595,13 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
         if (!src.empty() && src.find(".as_lambda") != std::string::npos) continue; // lambda store
         if (!src.empty() && pin_to_value.find(src) == pin_to_value.end()) {
             auto* src_node = find_source_node(inp.id);
-            if (src_node && src_node->type != "event!" && !materialized.count(src_node->guid)) {
+            if (src_node && src_node->type_id != NodeTypeID::EventBang && !materialized.count(src_node->guid)) {
                 materialize_node(*src_node, out, indent);
             }
         }
     }
 
-    if (node.type == "store!" || node.type == "store") {
+    if (is_any_of(node.type_id, NodeTypeID::StoreBang, NodeTypeID::Store)) {
         std::string target = resolve_inline_arg(node, 0);
 
         // Check if value comes from an as_lambda pin (storing a lambda as a variable)
@@ -1628,7 +1628,7 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
             for (auto* t : follow_bang_from(bout.id))
                 emit_node(*t, out, indent);
     }
-    else if (node.type == "append!") {
+    else if (node.type_id == NodeTypeID::AppendBang) {
         std::string target = resolve_inline_arg(node, 0);
         std::string value;
         if (node.parsed_exprs.size() >= 2)
@@ -1655,7 +1655,7 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
         for (auto* t : follow_bang_from(node.bang_pin.id))
             emit_node(*t, out, indent);
     }
-    else if (node.type == "resize!") {
+    else if (node.type_id == NodeTypeID::ResizeBang) {
         std::string target = resolve_inline_arg(node, 0);
         std::string size = resolve_inline_arg(node, 1);
         // resize takes size_t; cast if the size arg isn't already u64/size_t
@@ -1680,7 +1680,7 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
             for (auto* t : follow_bang_from(bout.id))
                 emit_node(*t, out, indent);
     }
-    else if (node.type == "erase!") {
+    else if (node.type_id == NodeTypeID::EraseBang) {
         std::string target = resolve_inline_arg(node, 0);
         std::string key = resolve_inline_arg(node, 1);
         out << ind << target << ".erase(" << key << ");\n";
@@ -1691,7 +1691,7 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
             for (auto* t : follow_bang_from(bout.id))
                 emit_node(*t, out, indent);
     }
-    else if (node.type == "select!") {
+    else if (node.type_id == NodeTypeID::SelectBang) {
         std::string cond = resolve_inline_arg(node, 0);
         out << ind << "if (" << cond << ") {\n";
 
@@ -1716,7 +1716,7 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
         }
         out << ind << "}\n";
     }
-    else if (node.type == "iterate!") {
+    else if (node.type_id == NodeTypeID::IterateBang) {
         std::string collection = resolve_inline_arg(node, 0);
         std::string it_var = fresh_var("it");
 
@@ -1792,7 +1792,7 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
             for (auto* t : follow_bang_from(bout.id))
                 emit_node(*t, out, indent);
     }
-    else if (node.type == "lock!") {
+    else if (node.type_id == NodeTypeID::LockBang) {
         std::string mutex_var = resolve_inline_arg(node, 0);
         std::string lock_var = fresh_var("lock_guard");
 
@@ -1840,7 +1840,7 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
             for (auto* t : follow_bang_from(bout.id))
                 emit_node(*t, out, indent);
     }
-    else if (node.type == "expr!") {
+    else if (node.type_id == NodeTypeID::ExprBang) {
         if (!node.parsed_exprs.empty()) {
             for (auto& expr : node.parsed_exprs) {
                 if (expr) out << ind << expr_to_cpp(expr, &node) << ";\n";
@@ -1850,7 +1850,7 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
             for (auto* t : follow_bang_from(bout.id))
                 emit_node(*t, out, indent);
     }
-    else if (node.type == "discard!") {
+    else if (node.type_id == NodeTypeID::DiscardBang) {
         // Materialize input to trigger side effects, then discard.
         // The input may be void (e.g. from a void select), so don't require a value —
         // just ensure the source node is materialized for its side effects.
@@ -1869,11 +1869,11 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
             for (auto* t : follow_bang_from(bout.id))
                 emit_node(*t, out, indent);
     }
-    else if (node.type == "output_mix!") {
+    else if (node.type_id == NodeTypeID::OutputMixBang) {
         std::string value = resolve_inline_arg(node, 0);
         out << ind << "output_mix(" << value << ");\n";
     }
-    else if (node.type == "call!") {
+    else if (node.type_id == NodeTypeID::CallBang) {
         // Bang call: resolve function ref and args
         std::string fn_name = resolve_inline_arg(node, 0);
         std::ostringstream call_expr;
@@ -1927,7 +1927,7 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
             for (auto* t : follow_bang_from(bout.id))
                 emit_node(*t, out, indent);
     }
-    else if (node.type == "decl_local") {
+    else if (node.type_id == NodeTypeID::DeclLocal) {
         // decl_local <name> <type>
         auto tokens = tokenize_args(node.args, false);
         if (tokens.size() >= 2) {
@@ -1952,7 +1952,7 @@ void CodeGenerator::emit_node(FlowNode& node, std::ostringstream& out, int inden
                 emit_node(*t, out, indent);
     }
     else {
-        throw std::runtime_error("codegen: unsupported bang node type " + node.type + " [" + node.guid.substr(0, 8) + "]");
+        throw std::runtime_error("codegen: unsupported bang node type " + std::string(node_type_str(node.type_id)) + " [" + node.guid.substr(0, 8) + "]");
     }
 }
 
@@ -1981,7 +1981,7 @@ std::string CodeGenerator::generate_cmake(const std::string& nanoruntime_path,
     bool uses_imgui = false;
     bool uses_gui = false;
     for (auto& n : graph.nodes) {
-        if (n.type == "decl_import") {
+        if (n.type_id == NodeTypeID::DeclImport) {
             auto tokens = tokenize_args(n.args, false);
             if (!tokens.empty() && tokens[0] == "std/imgui")
                 uses_imgui = true;
@@ -2051,7 +2051,7 @@ std::string CodeGenerator::generate_vcpkg() {
     bool uses_imgui = false;
     bool uses_gui = false;
     for (auto& n : graph.nodes) {
-        if (n.type == "decl_import") {
+        if (n.type_id == NodeTypeID::DeclImport) {
             auto tokens = tokenize_args(n.args, false);
             if (!tokens.empty() && tokens[0] == "std/imgui")
                 uses_imgui = true;

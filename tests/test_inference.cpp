@@ -68,7 +68,7 @@ struct GraphBuilder {
         FlowNode node;
         node.id = graph.next_node_id();
         node.guid = guid;
-        node.type = type;
+        node.type_id = node_type_id_from_string(type.c_str());
         node.args = args;
         node.position = {0, 0};
 

@@ -1,5 +1,60 @@
 #pragma once
 #include <cstring>
+#include <cstdint>
+
+// Node type enum — order must match NODE_TYPES array exactly
+enum class NodeTypeID : uint8_t {
+    Expr,           // 0
+    Select,         // 1
+    New,            // 2
+    Dup,            // 3
+    Str,            // 4
+    Void,           // 5
+    DiscardBang,    // 6
+    Discard,        // 7
+    DeclType,       // 8
+    DeclVar,        // 9
+    DeclLocal,      // 10
+    DeclEvent,      // 11
+    DeclImport,     // 12
+    Ffi,            // 13
+    Call,           // 14
+    CallBang,       // 15
+    Erase,          // 16
+    OutputMixBang,  // 17
+    Append,         // 18
+    AppendBang,     // 19
+    Store,          // 20
+    StoreBang,      // 21
+    EventBang,      // 22
+    OnKeyDownBang,  // 23
+    OnKeyUpBang,    // 24
+    SelectBang,     // 25
+    ExprBang,       // 26
+    EraseBang,      // 27
+    Iterate,        // 28
+    IterateBang,    // 29
+    Next,           // 30
+    Lock,           // 31
+    LockBang,       // 32
+    ResizeBang,     // 33
+    Cast,           // 34
+    Label,          // 35
+    COUNT,
+    Unknown = 255
+};
+
+// Variadic helper for multi-type checks
+template<typename... Ts>
+constexpr bool is_any_of(NodeTypeID id, Ts... ids) {
+    return ((id == ids) || ...);
+}
+
+// String accessor for display/serialization
+static const char* node_type_str(NodeTypeID id);
+
+// Lookup by string (for deserialization)
+static NodeTypeID node_type_id_from_string(const char* name);
 
 // Port descriptor for named/documented ports
 enum class PortKind { Data, Lambda };
@@ -7,6 +62,7 @@ struct PortDesc { const char* name; const char* desc; PortKind kind = PortKind::
 
 // Known node type descriptor
 struct NodeType {
+    NodeTypeID type_id;
     const char* name;
     const char* desc;
     int bang_inputs; int inputs; int bang_outputs; int outputs;
@@ -41,47 +97,63 @@ static const PortDesc P_LOCK_IN[]   = {{"mutex", "mutex to lock", PortKind::Data
 static const PortDesc P_RESIZE_IN[] = {{"target", "vector to resize", PortKind::Data, "value"}, {"size", "new size", PortKind::Data, "s32"}};
 
 static const NodeType NODE_TYPES[] = {
-    {"expr",   "Evaluate expression",                 0,0, 0,1, false,false,true, false, nullptr, nullptr, nullptr, P_RESULT},
-    {"select", "Select value by condition",            0,3, 0,1, false,false,true, false, nullptr, P_SELECT_IN, nullptr, P_RESULT},
-    {"new",    "Instantiate a type",                   0,0, 0,1, false,false,true, false, nullptr, nullptr, nullptr, P_RESULT},
-    {"dup",    "Duplicate input to output",           0,1, 0,1, false,false,true, false, nullptr, P_VALUE, nullptr, P_RESULT},
-    {"str",    "Convert to string",                   0,1, 0,1, false,false,true, false, nullptr, P_VALUE, nullptr, P_RESULT},
-    {"void",   "Void result (no-op)",                 0,0, 0,1, false,false,true, false, nullptr, nullptr, nullptr, P_RESULT},
-    {"discard!","Discard value, pass bang",             1,1, 1,0, false,true, false,false, P_BANG_IN, P_VALUE, P_BANG_TRIG, nullptr},
-    {"discard","Discard input values",               0,1, 0,0, false,false,true, false, nullptr, P_VALUE, nullptr, nullptr},
-    {"decl_type", "Declare a type",                    0,0, 0,0, false,false,false,true,  nullptr, nullptr, nullptr, nullptr},
-    {"decl_var",  "Declare a variable",                0,0, 0,0, false,false,false,true,  nullptr, nullptr, nullptr, nullptr},
-    {"decl_local","Declare local: name type", 1,2, 1,1, false,true, false,false, P_BANG_IN, P_LOCAL_IN, P_BANG_TRIG, P_RESULT},
-    {"decl_event","Declare event: name fn_type|(args)->ret", 0,0, 0,0, false,false,false,true, nullptr, nullptr, nullptr, nullptr},
-    {"decl_import","Import namespace: std/<module>", 0,0, 0,0, false,false,false,true, nullptr, nullptr, nullptr, nullptr},
-    {"ffi",    "Declare external function: name type", 0,0, 0,0, false,false,false,true, nullptr, nullptr, nullptr, nullptr},
-    {"call",   "Call function with arguments",         0,0, 0,0, false,false,true, false, nullptr, nullptr, nullptr, nullptr},
-    {"call!",  "Call function with arguments (bang)",   1,0, 1,0, false,true, false,false, P_BANG_IN, nullptr, P_BANG_TRIG, nullptr},
-    {"erase","Erase from collection",                 0,2, 0,1, false,false,false,false, nullptr, P_ERASE_IN, nullptr, P_RESULT},
-    {"output_mix!","Mix into audio output",            1,1, 0,0, false,false,false,false, P_BANG_IN, P_VALUE, nullptr, nullptr},
-    {"append", "Append item to collection",            0,2, 0,1, false,false,true, false, nullptr, P_APPEND_IN, nullptr, P_RESULT},
-    {"append!","Append item to collection",           1,2, 1,1, false,true, true, false, P_BANG_IN, P_APPEND_IN, P_BANG_TRIG, P_RESULT},
-    {"store",  "Store value into variable/reference",  0,2, 0,0, false,false,true, false, nullptr, P_STORE_IN, nullptr, nullptr},
-    {"store!", "Store value into variable/reference",  1,2, 1,0, false,true, false,false, P_BANG_IN, P_STORE_IN, P_BANG_TRIG, nullptr},
-    {"event!", "Event source (args from decl_event)",  0,0, 1,0, false,true, false,false, nullptr, nullptr, P_BANG_TRIG, nullptr},
-    {"on_key_down!","Klavier key press event",        0,0, 1,2, true, true, false,false, nullptr, nullptr, P_KEY_EVENT, P_KEY_OUTS},
-    {"on_key_up!",  "Klavier key release event",      0,0, 1,2, true, true, false,false, nullptr, nullptr, P_KEY_UP_EVENT, P_KEY_OUTS},
-    {"select!",  "Branch on condition",                 1,1, 2,0, false,true, false,false, P_BANG_IN, P_COND_IN, P_COND_BANG, nullptr},
-    {"expr!",  "Evaluate expression on bang",         1,0, 1,0, false,true, false,false, P_BANG_IN, nullptr, P_BANG_TRIG, nullptr},
-    {"erase!", "Erase from collection",              1,2, 1,1, false,true, false,false, P_BANG_IN, P_ERASE_IN, P_BANG_TRIG, P_RESULT},
-    {"iterate", "it=first; while it!=end: it=fn(it)",  0,2, 0,0, false,false,true, false, nullptr, P_ITERATE_IN, nullptr, nullptr},
-    {"iterate!","it=first; while it!=end: it=fn(it)",  1,2, 1,0, false,true, false,false, P_BANG_IN, P_ITERATE_IN, P_BANG_TRIG, nullptr},
-    {"next",   "Advance iterator to next element",     0,1, 0,1, false,false,true, false, nullptr, P_VALUE, nullptr, P_RESULT},
-    {"lock",   "Execute lambda under mutex lock",      0,2, 0,0, false,false,true, false, nullptr, P_LOCK_IN, nullptr, nullptr},
-    {"lock!",  "Execute lambda under mutex lock (bang)",1,2, 1,0, false,true, false,false, P_BANG_IN, P_LOCK_IN, P_BANG_TRIG, nullptr},
-    {"resize!","Resize vector",                         1,2, 1,0, false,true, false,false, P_BANG_IN, P_RESIZE_IN, P_BANG_TRIG, nullptr},
-    {"cast",   "Cast value to type",                    0,1, 0,1, false,false,false,false, nullptr, P_VALUE, nullptr, P_RESULT},
-    {"label",  "Text label (no connections)",          0,0, 0,0, false,true, false,false, nullptr, nullptr, nullptr, nullptr},
+    {NodeTypeID::Expr,          "expr",       "Evaluate expression",                 0,0, 0,1, false,false,true, false, nullptr, nullptr, nullptr, P_RESULT},
+    {NodeTypeID::Select,        "select",     "Select value by condition",            0,3, 0,1, false,false,true, false, nullptr, P_SELECT_IN, nullptr, P_RESULT},
+    {NodeTypeID::New,           "new",        "Instantiate a type",                   0,0, 0,1, false,false,true, false, nullptr, nullptr, nullptr, P_RESULT},
+    {NodeTypeID::Dup,           "dup",        "Duplicate input to output",           0,1, 0,1, false,false,true, false, nullptr, P_VALUE, nullptr, P_RESULT},
+    {NodeTypeID::Str,           "str",        "Convert to string",                   0,1, 0,1, false,false,true, false, nullptr, P_VALUE, nullptr, P_RESULT},
+    {NodeTypeID::Void,          "void",       "Void result (no-op)",                 0,0, 0,1, false,false,true, false, nullptr, nullptr, nullptr, P_RESULT},
+    {NodeTypeID::DiscardBang,   "discard!",   "Discard value, pass bang",             1,1, 1,0, false,true, false,false, P_BANG_IN, P_VALUE, P_BANG_TRIG, nullptr},
+    {NodeTypeID::Discard,       "discard",    "Discard input values",               0,1, 0,0, false,false,true, false, nullptr, P_VALUE, nullptr, nullptr},
+    {NodeTypeID::DeclType,      "decl_type",  "Declare a type",                      0,0, 0,0, false,false,false,true,  nullptr, nullptr, nullptr, nullptr},
+    {NodeTypeID::DeclVar,       "decl_var",   "Declare a variable",                  0,0, 0,0, false,false,false,true,  nullptr, nullptr, nullptr, nullptr},
+    {NodeTypeID::DeclLocal,     "decl_local", "Declare local: name type",            1,2, 1,1, false,true, false,false, P_BANG_IN, P_LOCAL_IN, P_BANG_TRIG, P_RESULT},
+    {NodeTypeID::DeclEvent,     "decl_event", "Declare event: name fn_type|(args)->ret", 0,0, 0,0, false,false,false,true, nullptr, nullptr, nullptr, nullptr},
+    {NodeTypeID::DeclImport,    "decl_import","Import namespace: std/<module>",       0,0, 0,0, false,false,false,true, nullptr, nullptr, nullptr, nullptr},
+    {NodeTypeID::Ffi,           "ffi",        "Declare external function: name type", 0,0, 0,0, false,false,false,true, nullptr, nullptr, nullptr, nullptr},
+    {NodeTypeID::Call,          "call",       "Call function with arguments",         0,0, 0,0, false,false,true, false, nullptr, nullptr, nullptr, nullptr},
+    {NodeTypeID::CallBang,      "call!",      "Call function with arguments (bang)",   1,0, 1,0, false,true, false,false, P_BANG_IN, nullptr, P_BANG_TRIG, nullptr},
+    {NodeTypeID::Erase,         "erase",      "Erase from collection",               0,2, 0,1, false,false,false,false, nullptr, P_ERASE_IN, nullptr, P_RESULT},
+    {NodeTypeID::OutputMixBang, "output_mix!","Mix into audio output",                1,1, 0,0, false,false,false,false, P_BANG_IN, P_VALUE, nullptr, nullptr},
+    {NodeTypeID::Append,        "append",     "Append item to collection",            0,2, 0,1, false,false,true, false, nullptr, P_APPEND_IN, nullptr, P_RESULT},
+    {NodeTypeID::AppendBang,    "append!",    "Append item to collection",           1,2, 1,1, false,true, true, false, P_BANG_IN, P_APPEND_IN, P_BANG_TRIG, P_RESULT},
+    {NodeTypeID::Store,         "store",      "Store value into variable/reference",  0,2, 0,0, false,false,true, false, nullptr, P_STORE_IN, nullptr, nullptr},
+    {NodeTypeID::StoreBang,     "store!",     "Store value into variable/reference",  1,2, 1,0, false,true, false,false, P_BANG_IN, P_STORE_IN, P_BANG_TRIG, nullptr},
+    {NodeTypeID::EventBang,     "event!",     "Event source (args from decl_event)",  0,0, 1,0, false,true, false,false, nullptr, nullptr, P_BANG_TRIG, nullptr},
+    {NodeTypeID::OnKeyDownBang, "on_key_down!","Klavier key press event",             0,0, 1,2, true, true, false,false, nullptr, nullptr, P_KEY_EVENT, P_KEY_OUTS},
+    {NodeTypeID::OnKeyUpBang,   "on_key_up!", "Klavier key release event",            0,0, 1,2, true, true, false,false, nullptr, nullptr, P_KEY_UP_EVENT, P_KEY_OUTS},
+    {NodeTypeID::SelectBang,    "select!",    "Branch on condition",                   1,1, 2,0, false,true, false,false, P_BANG_IN, P_COND_IN, P_COND_BANG, nullptr},
+    {NodeTypeID::ExprBang,      "expr!",      "Evaluate expression on bang",          1,0, 1,0, false,true, false,false, P_BANG_IN, nullptr, P_BANG_TRIG, nullptr},
+    {NodeTypeID::EraseBang,     "erase!",     "Erase from collection",               1,2, 1,1, false,true, false,false, P_BANG_IN, P_ERASE_IN, P_BANG_TRIG, P_RESULT},
+    {NodeTypeID::Iterate,       "iterate",    "it=first; while it!=end: it=fn(it)",   0,2, 0,0, false,false,true, false, nullptr, P_ITERATE_IN, nullptr, nullptr},
+    {NodeTypeID::IterateBang,   "iterate!",   "it=first; while it!=end: it=fn(it)",   1,2, 1,0, false,true, false,false, P_BANG_IN, P_ITERATE_IN, P_BANG_TRIG, nullptr},
+    {NodeTypeID::Next,          "next",       "Advance iterator to next element",     0,1, 0,1, false,false,true, false, nullptr, P_VALUE, nullptr, P_RESULT},
+    {NodeTypeID::Lock,          "lock",       "Execute lambda under mutex lock",      0,2, 0,0, false,false,true, false, nullptr, P_LOCK_IN, nullptr, nullptr},
+    {NodeTypeID::LockBang,      "lock!",      "Execute lambda under mutex lock (bang)",1,2, 1,0, false,true, false,false, P_BANG_IN, P_LOCK_IN, P_BANG_TRIG, nullptr},
+    {NodeTypeID::ResizeBang,    "resize!",    "Resize vector",                         1,2, 1,0, false,true, false,false, P_BANG_IN, P_RESIZE_IN, P_BANG_TRIG, nullptr},
+    {NodeTypeID::Cast,          "cast",       "Cast value to type",                    0,1, 0,1, false,false,false,false, nullptr, P_VALUE, nullptr, P_RESULT},
+    {NodeTypeID::Label,         "label",      "Text label (no connections)",           0,0, 0,0, false,true, false,false, nullptr, nullptr, nullptr, nullptr},
 };
 static constexpr int NUM_NODE_TYPES = sizeof(NODE_TYPES) / sizeof(NODE_TYPES[0]);
+
+static const char* node_type_str(NodeTypeID id) {
+    if (static_cast<uint8_t>(id) < NUM_NODE_TYPES) return NODE_TYPES[static_cast<uint8_t>(id)].name;
+    return "unknown";
+}
+
+static NodeTypeID node_type_id_from_string(const char* name) {
+    for (int i = 0; i < NUM_NODE_TYPES; i++)
+        if (strcmp(NODE_TYPES[i].name, name) == 0) return NODE_TYPES[i].type_id;
+    return NodeTypeID::Unknown;
+}
 
 static const NodeType* find_node_type(const char* name) {
     for (int i = 0; i < NUM_NODE_TYPES; i++)
         if (strcmp(NODE_TYPES[i].name, name) == 0) return &NODE_TYPES[i];
+    return nullptr;
+}
+
+static const NodeType* find_node_type(NodeTypeID id) {
+    if (static_cast<uint8_t>(id) < NUM_NODE_TYPES) return &NODE_TYPES[static_cast<uint8_t>(id)];
     return nullptr;
 }
