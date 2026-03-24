@@ -191,6 +191,13 @@ void generate_shadow_nodes(FlowGraph& graph) {
             shadow.outputs.push_back(make_pin("", "out0", "", nullptr, FlowPin::Output));
             shadow.rebuild_pin_ids();
 
+            // Pre-parse the expression
+            auto parse_result = parse_expression(tok);
+            if (parse_result.root)
+                shadow.parsed_exprs.push_back(parse_result.root);
+            else
+                shadow.parsed_exprs.push_back(nullptr);
+
             // Wire shadow's $N inputs from parent's $N sources
             for (int pi = 0; pi < pin_count; pi++) {
                 std::string pn = slots.is_lambda_slot(pi)

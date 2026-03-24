@@ -239,25 +239,21 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
         // Skip expression parsing for nodes whose args aren't expressions
         bool skip_expr_parse = is_any_of(node.type_id, NodeTypeID::DeclLocal, NodeTypeID::Void, NodeTypeID::Cast);
 
-        // Parse expression(s) if not cached.
-        // For expr nodes, each space-separated token is a separate expression/output.
-        // For non-expr nodes, each token is an inline expression for a descriptor input.
-        if (!skip_expr_parse && node.args != node.last_parsed_args) {
-            node.parsed_exprs.clear();
-            if (!node.args.empty()) {
-                auto tokens = tokenize_args(node.args, false);
-                for (auto& tok : tokens) {
-                    auto result = parse_expression(tok);
-                    if (result.root && result.error.empty())
-                        node.parsed_exprs.push_back(result.root);
-                    else {
-                        if (!result.error.empty() && node.error.empty())
-                            node.error = "In '" + tok + "': " + result.error;
-                        node.parsed_exprs.push_back(nullptr); // placeholder
-                    }
+        // Expressions should be pre-parsed at load time. Only parse here as a
+        // fallback for nodes created at runtime (e.g. tests, editor) that don't
+        // go through the serial load pipeline.
+        if (!skip_expr_parse && node.parsed_exprs.empty() && !node.args.empty()) {
+            auto tokens = tokenize_args(node.args, false);
+            for (auto& tok : tokens) {
+                auto result = parse_expression(tok);
+                if (result.root && result.error.empty())
+                    node.parsed_exprs.push_back(result.root);
+                else {
+                    if (!result.error.empty() && node.error.empty())
+                        node.error = "In '" + tok + "': " + result.error;
+                    node.parsed_exprs.push_back(nullptr);
                 }
             }
-            node.last_parsed_args = node.args;
         }
 
         if (node.parsed_exprs.empty() && !needs_type_propagation && !has_custom_output) continue;

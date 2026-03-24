@@ -66,10 +66,16 @@ struct FlowNode {
     bool imported = false;        // true if this node was loaded from a nanostd import
     bool shadow = false;          // true if this is an internal shadow expr node (not serialized/rendered)
 
-    // Expression parsing cache
-    std::vector<ExprPtr> parsed_exprs;   // cached AST(s) for expr nodes
-    std::string last_parsed_args;        // for cache invalidation
-    bool type_dirty = true;              // set true when args/connections change
+    // Parsed expressions — populated at load time, never re-parsed from strings
+    std::vector<ExprPtr> parsed_exprs;
+    bool type_dirty = true;
+
+    // Pre-computed inline arg metadata — populated at load time
+    struct InlineArgMeta {
+        int num_inline_args = 0;     // how many tokens fill descriptor inputs
+        int ref_pin_count = 0;       // number of $N/@N ref pins
+    };
+    InlineArgMeta inline_meta;
 
     // Pre-computed by inference — consumed by codegen
     struct ResolvedLambda {

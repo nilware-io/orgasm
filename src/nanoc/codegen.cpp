@@ -462,14 +462,10 @@ std::string CodeGenerator::resolve_inline_arg(FlowNode& node, int arg_index) {
     // Remaining descriptor inputs become pins, indexed after any $N ref pins.
     auto* nt = find_node_type(node.type_id);
     int descriptor_inputs = nt ? nt->inputs : 0;
-    auto info = compute_inline_args(node.args, descriptor_inputs);
-    int ref_pins = (info.pin_slots.max_slot >= 0) ? (info.pin_slots.max_slot + 1) : 0;
 
-    // arg_index maps to descriptor input `arg_index`.
-    // If arg_index >= num_inline_args, it's a remaining descriptor pin.
-    // Remaining pins start after ref_pins in node.inputs.
-    int remaining_pin_offset = arg_index - info.num_inline_args;
-    int pin_index = ref_pins + remaining_pin_offset;
+    // Use pre-computed inline arg metadata
+    int remaining_pin_offset = arg_index - node.inline_meta.num_inline_args;
+    int pin_index = node.inline_meta.ref_pin_count + remaining_pin_offset;
 
     if (pin_index >= 0 && pin_index < (int)node.inputs.size()) {
         std::string src = find_source_pin(node.inputs[pin_index]->id);
