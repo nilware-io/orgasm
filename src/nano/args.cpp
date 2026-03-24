@@ -2,6 +2,7 @@
 #include "model.h"
 #include "expr.h"
 #include "node_types.h"
+#include <functional>
 
 std::vector<std::string> tokenize_args(const std::string& input, bool implicit_parens) {
     std::string src = implicit_parens ? ("(" + input + ")") : input;
@@ -250,6 +251,21 @@ void FlowNode::parse_args() {
                 parsed_exprs.push_back(result.root); // may be nullptr
             }
         }
+    }
+
+    // Apply $N:name annotations from parsed expressions to input pin names
+    for (auto& expr : parsed_exprs) {
+        if (!expr) continue;
+        std::function<void(const ExprPtr&)> apply_names = [&](const ExprPtr& e) {
+            if (!e) return;
+            if (e->kind == ExprKind::PinRef && !e->pin_ref.name.empty()) {
+                std::string idx_name = std::to_string(e->pin_ref.index);
+                for (auto& p : inputs)
+                    if (p->name == idx_name) { p->name = e->pin_ref.name; break; }
+            }
+            for (auto& child : e->children) apply_names(child);
+        };
+        apply_names(expr);
     }
 
     // Compute inline metadata for non-expr, non-type-arg nodes

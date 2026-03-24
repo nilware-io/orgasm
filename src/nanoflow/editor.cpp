@@ -41,10 +41,16 @@ static constexpr ImU32 COL_LINK_DRAG  = IM_COL32(255, 255, 150, 200);
 // Look up port description for a pin on a node.
 // Returns {port_name, port_desc} or {"", ""} if not found.
 static std::pair<std::string, std::string> get_port_desc(const FlowNode& node, const FlowPin& pin) {
-    auto* nt = find_node_type(node.type_id);
-    if (!nt) return {pin.name, ""};
+    // Use the pin's own name — it reflects $N:name annotations from parse_args()
+    // For descriptor pins (non-$N), the name comes from the node type descriptor
+    // For $N ref pins, the name is either the numeric index or the :name annotation
+    if (node.lambda_grab.id == pin.id) return {"as_lambda", "pass as lambda"};
+    if (node.bang_pin.id == pin.id) return {"bang", "bang connector"};
 
-    auto find_in = [&](const auto& pins, const PortDesc* descs, int count) -> std::pair<std::string, std::string> {
+    auto* nt = find_node_type(node.type_id);
+
+    // For bang pins, use descriptor names
+    auto find_bang = [&](const auto& pins, const PortDesc* descs, int count) -> std::pair<std::string, std::string> {
         int idx = 0;
         for (auto& p : pins) {
             if (p->id == pin.id) {
@@ -56,16 +62,20 @@ static std::pair<std::string, std::string> get_port_desc(const FlowNode& node, c
         return {"", ""};
     };
 
-    auto r = find_in(node.bang_inputs, nt->bang_input_ports, nt->bang_inputs);
-    if (!r.first.empty()) return r;
-    r = find_in(node.inputs, nt->input_ports, nt->inputs);
-    if (!r.first.empty()) return r;
-    r = find_in(node.bang_outputs, nt->bang_output_ports, nt->bang_outputs);
-    if (!r.first.empty()) return r;
-    r = find_in(node.outputs, nt->output_ports, nt->outputs);
-    if (!r.first.empty()) return r;
-    if (node.lambda_grab.id == pin.id) return {"as_lambda", "pass as lambda"};
-    if (node.bang_pin.id == pin.id) return {"bang", "bang connector"};
+    if (nt) {
+        auto r = find_bang(node.bang_inputs, nt->bang_input_ports, nt->bang_inputs);
+        if (!r.first.empty()) return r;
+        r = find_bang(node.bang_outputs, nt->bang_output_ports, nt->bang_outputs);
+        if (!r.first.empty()) return r;
+        r = find_bang(node.outputs, nt->output_ports, nt->outputs);
+        if (!r.first.empty()) return r;
+    }
+
+    // For data input pins: use the pin's own name (set by parse_args from $N:name)
+    for (auto& p : node.inputs) {
+        if (p->id == pin.id) return {pin.name, ""};
+    }
+
     return {pin.name, ""};
 }
 
