@@ -624,6 +624,14 @@ TypePtr TypeInferenceContext::find_field_type(const TypePtr& obj_type, const std
     return nullptr;
 }
 
+// Strip reference category — references decay to values when used in rvalue context
+static TypePtr decay_ref(const TypePtr& t) {
+    if (!t || t->category != TypeCategory::Reference) return t;
+    auto copy = std::make_shared<TypeExpr>(*t);
+    copy->category = TypeCategory::Data;
+    return copy;
+}
+
 TypePtr TypeInferenceContext::infer(const ExprPtr& expr) {
     if (!expr) return pool.t_unknown;
     // Return cached result only if it's a concrete (non-generic) type
@@ -836,6 +844,19 @@ TypePtr TypeInferenceContext::infer(const ExprPtr& expr) {
     }
 
     expr->resolved_type = result ? result : pool.t_unknown;
+
+    // Decay references for rvalue expressions — arithmetic, function calls, etc.
+    // produce values, not references. Only lvalue-compatible kinds keep references.
+    if (expr->resolved_type && expr->resolved_type->category == TypeCategory::Reference) {
+        bool is_lvalue_kind = (expr->kind == ExprKind::PinRef ||
+                               expr->kind == ExprKind::VarRef ||
+                               expr->kind == ExprKind::FieldAccess ||
+                               expr->kind == ExprKind::Index ||
+                               expr->kind == ExprKind::Ref);
+        if (!is_lvalue_kind) {
+            expr->resolved_type = decay_ref(expr->resolved_type);
+        }
+    }
 
     // Set access kind based on resolved type
     if (expr->resolved_type) {
