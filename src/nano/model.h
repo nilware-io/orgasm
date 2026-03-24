@@ -116,6 +116,9 @@ public:
     float viewport_x = 0, viewport_y = 0, viewport_zoom = 1.0f;
     bool has_viewport = false; // true if loaded from file
 
+    // Dirty flag — set when graph structure changes, cleared after validation
+    bool dirty = true;
+
     int add_node(const std::string& guid, Vec2 pos, int num_inputs = 1, int num_outputs = 1) {
         FlowNode node;
         node.id = next_id_++;
@@ -131,6 +134,7 @@ public:
         }
         if (!guid.empty()) node.rebuild_pin_ids();
         nodes.push_back(std::move(node));
+        dirty = true;
         return nodes.back().id;
     }
 
@@ -153,6 +157,7 @@ public:
         link.from_pin = from_pin;
         link.to_pin = to_pin;
         links.push_back(link);
+        dirty = true;
         return link.id;
     }
 
@@ -173,10 +178,12 @@ public:
             erase_pin(node.bang_pin.id, true);
         }
         std::erase_if(nodes, [&](auto& n) { return n.id == node_id; });
+        dirty = true;
     }
 
     void remove_link(int link_id) {
         std::erase_if(links, [&](auto& l) { return l.id == link_id; });
+        dirty = true;
     }
 
     int next_node_id() { return next_id_++; }

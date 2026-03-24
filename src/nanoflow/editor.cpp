@@ -625,8 +625,11 @@ void FlowEditorWindow::draw() {
         }
     }
 
-    // Validate nodes each frame
-    validate_nodes();
+    // Validate only when graph structure changes
+    if (active().graph.dirty) {
+        validate_nodes();
+        active().graph.dirty = false;
+    }
 
     ImGui::SetNextWindowPos({0, 0});
     int w, h;
@@ -939,6 +942,7 @@ void FlowEditorWindow::draw() {
                         std::erase_if(active().graph.links, [&](auto& l) { return l.from_pin == grabbed_pin_; });
                     else
                         std::erase_if(active().graph.links, [&](auto& l) { return l.to_pin == grabbed_pin_; });
+                    active().graph.dirty = true;
                 } else {
                     grabbed_pin_.clear();
                 }
@@ -1093,6 +1097,7 @@ void FlowEditorWindow::draw() {
             std::erase_if(active().graph.links, [&](auto& l) {
                 return l.from_pin == pin_hit.pin_id || l.to_pin == pin_hit.pin_id;
             });
+            active().graph.dirty = true;
         }
         // Then check links
         else {
@@ -1432,6 +1437,7 @@ void FlowEditorWindow::draw() {
                     node.guid = generate_guid();
                 node.type_id = node_type_id_from_string(node_type.c_str());
                 node.args = rest_args;
+                active().graph.dirty = true;
                 creating_new_node_ = false;
 
                 // Resize a pin vector: reuse existing pins (preserving IDs/links),
