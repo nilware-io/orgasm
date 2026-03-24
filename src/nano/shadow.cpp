@@ -12,6 +12,8 @@ static bool skip_shadow(NodeTypeID id) {
         NodeTypeID::New, NodeTypeID::EventBang, NodeTypeID::Cast,
         NodeTypeID::Label, NodeTypeID::Deref,
         NodeTypeID::Expr, NodeTypeID::ExprBang,
+        // TODO: call! nodes are skipped because resolve_type_based_pins manages their pins.
+        // Shadow exprs for call! args would fix $N(...) lambda call type resolution properly.
         NodeTypeID::Call, NodeTypeID::CallBang,
         NodeTypeID::Dup, NodeTypeID::Str, NodeTypeID::Void, NodeTypeID::Discard,
         NodeTypeID::DiscardBang, NodeTypeID::Next,

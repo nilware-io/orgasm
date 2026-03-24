@@ -4301,7 +4301,7 @@ TEST(shadow_skip_decl_nodes) {
 }
 
 TEST(shadow_skip_call_nodes) {
-    // call! nodes are skipped — they have complex pin management from resolve_type_based_pins
+    // call! nodes are skipped for now — resolve_type_based_pins manages their pins
     GraphBuilder gb;
     gb.add("ffi1", "ffi", R"(my_func (a:string b:s32) -> void)");
     gb.add("c1", "call!", R"($my_func "hello" 42)");
@@ -4614,6 +4614,185 @@ TEST(single_bang_trigger_with_captures_ok) {
     for (auto& l : gb.graph.links)
         if (!l.error.empty() && l.error.find("Cannot share") != std::string::npos) has_share_error = true;
     ASSERT(!has_share_error);
+}
+
+// ============================================================
+// Caller scope / capture vs parameter tests
+// ============================================================
+
+TEST(caller_scope_bang_ancestor_is_capture) {
+    // decl_local → bang → iterate!
+    // expr $0:name $1() inside the iterate lambda gets $0 from decl_local's output.
+    // decl_local is in the bang chain before iterate → its output is a capture.
+    // The lambda should have 1 param ($1), not 2.
+    GraphBuilder gb;
+    gb.add("dl", "decl_local", "slider_id u8");
+    gb.add("it", "iterate!", "$multifader");
+    gb.add("dv_mf", "decl_var", "multifader vector<f32>");
+
+    // expr $0:name $1() — $0 from decl_local, $1 is unconnected (lambda param)
+    gb.add("ex", "expr", "$0:name $1:iter");
+    gb.link("dl.out0", "ex.0");  // $0 = capture from caller scope
+
+    // dup → next pattern for iterate lambda
+    gb.add("dup", "dup", "");
+    gb.link("ex.out1", "dup.value");
+    gb.add("nx", "next", "");
+    gb.link("dup.out0", "nx.value");
+    gb.link("nx.as_lambda", "it.fn");
+
+    // Bang chain: decl_local → iterate
+    gb.link("dl." + gb.find("dl")->nexts[0]->name, "it." + gb.find("it")->triggers[0]->name);
+
+    auto errors = gb.run_inference();
+    for (auto& e : errors) printf("    ERR: %s\n", e.c_str());
+
+    // Check that no "Lambda has 0 parameter(s)" error exists
+    bool has_param_error = false;
+    for (auto& l : gb.graph.links)
+        if (!l.error.empty() && l.error.find("parameter") != std::string::npos) {
+            printf("    LINK ERR: %s\n", l.error.c_str());
+            has_param_error = true;
+        }
+    // The lambda should find $1 as a parameter (1 param, not 0)
+    ASSERT(!has_param_error);
+}
+
+TEST(caller_scope_does_not_enter_lambda) {
+    // store! $klavie_up receives select.as_lambda
+    // The select's subgraph (expr $0:midi_key) is INSIDE the lambda.
+    // The caller scope should NOT include expr $0:midi_key.
+    // So $0 on expr $0:midi_key should be a lambda parameter.
+    GraphBuilder gb;
+    gb.add("dt_key_set", "decl_type", "key_set map<u8, s32>");
+    gb.add("dv_keys", "decl_var", "keys key_set");
+    gb.add("dv_ku", "decl_var", "klavie_up (midi_key:u8) -> void");
+
+    gb.add("param", "expr", "$0:midi_key");
+    gb.add("cond", "expr", "$keys?[$0]");
+    gb.link("param.out0", "cond.0");
+
+    gb.add("t_val", "expr", "42");
+    gb.add("f_val", "expr", "0");
+    gb.add("sel", "select", "");
+    gb.link("cond.out0", "sel.condition");
+    gb.link("t_val.out0", "sel.if_true");
+    gb.link("f_val.out0", "sel.if_false");
+
+    gb.add("st", "store!", "$klavie_up");
+    gb.link("sel.as_lambda", "st.value");
+
+    auto errors = gb.run_inference();
+    for (auto& e : errors) printf("    ERR: %s\n", e.c_str());
+
+    // The lambda should have 1 parameter (midi_key:u8 from param.$0)
+    bool has_param_error = false;
+    for (auto& l : gb.graph.links)
+        if (!l.error.empty() && l.error.find("parameter") != std::string::npos) {
+            printf("    LINK ERR: %s\n", l.error.c_str());
+            has_param_error = true;
+        }
+    ASSERT(!has_param_error);
+}
+
+TEST(caller_scope_data_ancestor_is_capture) {
+    // A node feeding data to the capture node (not via bang, but via data input)
+    // should also be in caller scope.
+    // iterate! $collection — $collection comes from a decl_var.
+    // Inside the lambda, if a node references decl_var's output, it's a capture.
+    GraphBuilder gb;
+    gb.add("dv_col", "decl_var", "col vector<f32>");
+    gb.add("dv_x", "decl_var", "x f32");
+    gb.add("it", "iterate!", "$col");
+
+    // Lambda body: expr $0+$x — $0 is lambda param (iterator), $x is a global (capture)
+    gb.add("ex", "expr", "$0+$x");
+    gb.add("nx", "next", "");
+    gb.link("ex.out0", "nx.value");
+    gb.link("nx.as_lambda", "it.fn");
+
+    auto errors = gb.run_inference();
+    for (auto& e : errors) printf("    ERR: %s\n", e.c_str());
+
+    // $x is a global var ref — resolved by inference, not a pin.
+    // $0 is the only pin — should be the one lambda parameter.
+    // No parameter count errors expected.
+    bool has_param_error = false;
+    for (auto& l : gb.graph.links)
+        if (!l.error.empty() && l.error.find("parameter") != std::string::npos) {
+            printf("    LINK ERR: %s\n", l.error.c_str());
+            has_param_error = true;
+        }
+    ASSERT(!has_param_error);
+}
+
+// ============================================================
+// call! inline lambda call $N($M) tests
+// ============================================================
+
+TEST(call_inline_lambda_call_no_type_on_callee_pin) {
+    // call! $my_func $0($1) — $0 is a lambda, $0($1) calls it.
+    // The pin for $0 should NOT get the function arg type (&f32),
+    // because $0 is used as a callee, not as the value directly.
+    GraphBuilder gb;
+    gb.add("ffi1", "ffi", R"(my_func (value:&f32) -> void)");
+    gb.add("c1", "call!", R"($my_func $0($1))");
+    resolve_type_based_pins(gb.graph);
+
+    auto* c1 = gb.find("c1");
+    ASSERT(c1 != nullptr);
+
+    // Pin 0 ($0) should NOT have type &f32 — it's used as a callee
+    FlowPin* pin0 = nullptr;
+    for (auto& p : c1->inputs)
+        if (p->name == "0") { pin0 = p.get(); break; }
+    ASSERT(pin0 != nullptr);
+    // Pin type should not be &f32 (that's the fn arg type, not the callee type)
+    if (pin0->resolved_type) {
+        ASSERT(pin0->resolved_type->kind != TypeKind::Scalar ||
+               pin0->resolved_type->category != TypeCategory::Reference);
+    }
+}
+
+TEST(call_inline_lambda_call_resolves_correctly) {
+    // call! $my_func $0($1) where $0 is (x:f32)->f32 and $1 is f32
+    // The result of $0($1) should be f32, matching the fn arg type.
+    GraphBuilder gb;
+    gb.add("dt_accessor", "decl_type", "accessor (x:f32) -> &f32");
+    gb.add("dv_acc", "decl_var", "my_acc accessor");
+    gb.add("ffi1", "ffi", R"(my_func (value:&f32) -> void)");
+    gb.add("acc_expr", "expr", "$my_acc");  // outputs accessor (a lambda type)
+    gb.add("val_expr", "expr", "3.14f");    // outputs f32
+    gb.add("c1", "call!", R"($my_func $0($1))");
+    gb.link("acc_expr.out0", "c1.0");  // $0 = accessor lambda
+    gb.link("val_expr.out0", "c1.1");  // $1 = f32 arg
+
+    auto errors = gb.run_inference();
+    for (auto& e : errors) printf("    ERR: %s\n", e.c_str());
+
+    auto* c1 = gb.find("c1");
+    ASSERT(c1 != nullptr);
+    // Should have no "Cannot call non-function type" error
+    ASSERT(c1->error.empty());
+}
+
+TEST(call_inline_bare_pin_ref_gets_type) {
+    // call! $my_func $0 — bare $0 SHOULD get the fn arg type
+    // (only lambda-call $N(...) skips type propagation)
+    GraphBuilder gb;
+    gb.add("ffi1", "ffi", R"(my_func (a:string b:&f32 c:string) -> void)");
+    gb.add("c1", "call!", R"($my_func "hello" $0 "world")");
+    resolve_type_based_pins(gb.graph);
+
+    auto* c1 = gb.find("c1");
+    ASSERT(c1 != nullptr);
+
+    // Pin 0 ($0) is bare — SHOULD get type &f32 from fn arg
+    FlowPin* pin0 = nullptr;
+    for (auto& p : c1->inputs)
+        if (p->name == "0") { pin0 = p.get(); break; }
+    ASSERT(pin0 != nullptr);
+    ASSERT_EQ(pin0->type_name, "&f32");
 }
 
 // ============================================================

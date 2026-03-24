@@ -413,7 +413,30 @@ When an `expr` node has a **lambda grab** handle (`as_lambda`):
 
 **Example:** A lambda node has 3 inputs. Input `$0` is connected to a node whose own 2 inputs are unconnected. Input `$1` is connected to a node with 1 unconnected input. Input `$2` is unconnected. The resulting lambda has **4 parameters**: `$0`'s two (left to right), `$1`'s one, then `$2`.
 
+**Caller scope and captures:** The lambda capture point is the node that receives the `as_lambda` connection (e.g., `iterate!`, `store!`, `lock!`). All nodes that are in the **ancestral execution flow** before this capture point are in the **caller scope**. This includes:
+
+- Nodes reachable backward via the bang chain (trigger connections) from the capture node
+- Nodes reachable backward via data connections from those bang-chain ancestors
+
+When a lambda's data dependency traces back to a node in the caller scope, that dependency is a **capture** (already evaluated before the lambda was constructed), not a lambda parameter. The recursive parameter collection stops at caller-scope boundaries — it does not enter the caller's subgraph.
+
+**Example:** A `decl_local slider_id u8` node fires its bang to `iterate! $multifader`. Inside the iterate lambda body, an `expr $0:name $1()` node has `$0` connected to `decl_local`'s output and `$1` connected to another node inside the lambda. Since `decl_local` is in the caller scope (it's in the bang chain before `iterate!`), `$0` is a capture. Only `$1` (if unconnected) would be a lambda parameter.
+
 **Inbound type inference for lambdas:** If a downstream node expects a lambda of type `(u32, u32) -> u32`, the lambda's parameters are typed `u32, u32` and the output must resolve to `u32`.
+
+### Bang Pins
+
+Bang pins represent `() -> void` callable connections for control flow:
+
+- **BangTrigger** (top square): The node's callable entry point. When invoked, the node executes. Typed as `() -> void`. Can be used as a value source — connecting a BangTrigger to a data Input passes the `() -> void` callable as a value (e.g., to store it in a variable).
+- **BangNext** (bottom square): The node's continuation. After execution, the node calls whatever is connected here. Typed as `() -> void`. Links go FROM BangNext TO BangTrigger.
+- **Post-bang** (side): Fires after the node's inline expressions are evaluated. Same semantics as BangNext.
+
+**Link direction:** BangNext → BangTrigger. The "next" pin calls the "trigger" pin.
+
+**Multiple connections:** BangTrigger pins accept multiple incoming connections if the owning node has no captured data inputs (pure `() -> void` callable). Lambda pins accept multiple connections if the lambda root has no captures. Otherwise, inference reports an error.
+
+**Bidirectional BangTrigger:** A BangTrigger pin can be both a link destination (receiving bang chain flow from BangNext) and a link source (providing its `() -> void` value to a data Input pin).
 
 ## File Format (.nano)
 

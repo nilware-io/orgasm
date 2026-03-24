@@ -39,10 +39,12 @@ struct GraphInference {
 
     // Follow bang connections from a pin and collect lambda params from downstream nodes
     void follow_bang_chain(FlowGraph& graph, const std::string& from_pin_id,
-                          std::vector<FlowPin*>& params, std::set<std::string>& visited);
+                          std::vector<FlowPin*>& params, std::set<std::string>& visited,
+                          const std::set<std::string>* caller_scope = nullptr);
 
     void collect_lambda_params(FlowGraph& graph, FlowNode& node,
-                               std::vector<FlowPin*>& params, std::set<std::string>& visited);
+                               std::vector<FlowPin*>& params, std::set<std::string>& visited,
+                               const std::set<std::string>* caller_scope = nullptr);
 
     void validate_lambda(FlowNode& node, const std::vector<FlowPin*>& params,
                          const TypePtr& expected, FlowLink& link);

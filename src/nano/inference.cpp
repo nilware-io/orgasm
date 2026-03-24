@@ -150,6 +150,7 @@ void GraphInference::clear_all(FlowGraph& graph) {
         node.lambda_grab.resolved_type = nullptr;
         node.bang_pin.resolved_type = nullptr;
         for (auto& e : node.parsed_exprs) clear_expr_types(e);
+        node.error.clear();
     }
     for (auto& link : graph.links) link.error.clear();
 }
@@ -1073,10 +1074,16 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
 
 void GraphInference::propagate_pin_ref_types(FlowNode& node, bool& changed) {
     if (node.parsed_exprs.empty()) return;
-    std::function<void(const ExprPtr&)> walk = [&](const ExprPtr& e) {
+    // HACK/TODO: Walk expression tree and propagate resolved types from PinRef nodes back
+    // to pins. Skip PinRefs used as callees in FuncCall — their type is the function type,
+    // not the value type for the pin. This is a workaround for call! nodes not having shadow
+    // exprs (they're in the skip list because resolve_type_based_pins manages their pins).
+    // The proper fix: make shadow exprs work for call! nodes, so each inline arg (including
+    // $N(...) lambda calls) becomes its own expr node with independent type resolution.
+    std::function<void(const ExprPtr&, bool)> walk = [&](const ExprPtr& e, bool is_callee) {
         if (!e) return;
-        if (e->kind == ExprKind::PinRef && e->pin_ref.index >= 0 &&
-            e->pin_ref.index < (int)node.inputs.size()) {
+        if (e->kind == ExprKind::PinRef && !is_callee &&
+            e->pin_ref.index >= 0 && e->pin_ref.index < (int)node.inputs.size()) {
             auto& pin = *node.inputs[e->pin_ref.index];
             if (e->resolved_type && !e->resolved_type->is_generic &&
                 (!pin.resolved_type || pin.resolved_type->is_generic)) {
@@ -1084,9 +1091,13 @@ void GraphInference::propagate_pin_ref_types(FlowNode& node, bool& changed) {
                 changed = true;
             }
         }
-        for (auto& child : e->children) walk(child);
+        for (size_t i = 0; i < e->children.size(); i++) {
+            // children[0] of a FuncCall is the callee — don't propagate its type to the pin
+            bool child_is_callee = (e->kind == ExprKind::FuncCall && i == 0 && e->builtin == BuiltinFunc::None);
+            walk(e->children[i], child_is_callee);
+        }
     };
-    for (auto& expr : node.parsed_exprs) walk(expr);
+    for (auto& expr : node.parsed_exprs) walk(expr, false);
 }
 
 bool GraphInference::resolve_lambdas(FlowGraph& graph) {
@@ -1107,10 +1118,48 @@ bool GraphInference::resolve_lambdas(FlowGraph& graph) {
             }
             if (!expected || expected->kind != TypeKind::Function) continue;
 
+            // Build caller scope: all nodes in the bang chain ancestry before the
+            // lambda capture point. These nodes are already materialized — their outputs
+            // are captures, not lambda parameters.
+            std::set<std::string> caller_scope;
+            if (link.to_node) {
+                // Walk backward from the capture node's ANCESTORS (not the capture node itself).
+                // The capture node is the boundary — don't enter the lambda subgraph.
+                std::vector<FlowNode*> work;
+                // Seed with bang-chain ancestors of the capture node
+                for (auto& trig : link.to_node->triggers) {
+                    auto* src_n = idx.source_node(trig.get());
+                    if (src_n) work.push_back(src_n);
+                }
+                // Seed with data input sources of the capture node (but NOT the lambda itself)
+                for (auto& inp : link.to_node->inputs) {
+                    if (inp->direction == FlowPin::Lambda) continue;
+                    auto* src_pin = idx.source_pin(inp.get());
+                    // Skip if the source is an as_lambda pin (that's the lambda, not a capture)
+                    if (src_pin && src_pin->direction == FlowPin::LambdaGrab) continue;
+                    auto* src_n = idx.source_node(inp.get());
+                    if (src_n) work.push_back(src_n);
+                }
+                while (!work.empty()) {
+                    auto* n = work.back(); work.pop_back();
+                    if (caller_scope.count(n->guid)) continue;
+                    caller_scope.insert(n->guid);
+                    for (auto& trig : n->triggers) {
+                        auto* src_n = idx.source_node(trig.get());
+                        if (src_n) work.push_back(src_n);
+                    }
+                    for (auto& inp : n->inputs) {
+                        if (inp->direction == FlowPin::Lambda) continue;
+                        auto* src_n = idx.source_node(inp.get());
+                        if (src_n) work.push_back(src_n);
+                    }
+                }
+            }
+
             // Recursively collect unconnected input pins (lambda parameters)
             std::vector<FlowPin*> params;
             std::set<std::string> visited;
-            collect_lambda_params(graph, node, params, visited);
+            collect_lambda_params(graph, node, params, visited, &caller_scope);
 
             // Assign parameter types
             for (size_t i = 0; i < params.size() && i < expected->func_args.size(); i++) {
@@ -1145,16 +1194,18 @@ FlowNode* GraphInference::find_node_by_pin(FlowGraph& graph, const std::string& 
 }
 
 void GraphInference::follow_bang_chain(FlowGraph& graph, const std::string& from_pin_id,
-                      std::vector<FlowPin*>& params, std::set<std::string>& visited) {
+                      std::vector<FlowPin*>& params, std::set<std::string>& visited,
+                      const std::set<std::string>* caller_scope) {
     auto* pin = idx.find_pin(from_pin_id);
     if (!pin) return;
     for (auto* target_node : idx.follow_bang(pin)) {
-        collect_lambda_params(graph, *target_node, params, visited);
+        collect_lambda_params(graph, *target_node, params, visited, caller_scope);
     }
 }
 
 void GraphInference::collect_lambda_params(FlowGraph& graph, FlowNode& node,
-                           std::vector<FlowPin*>& params, std::set<std::string>& visited) {
+                           std::vector<FlowPin*>& params, std::set<std::string>& visited,
+                           const std::set<std::string>* caller_scope) {
     if (visited.count(node.guid)) return;
     visited.insert(node.guid);
 
@@ -1170,18 +1221,23 @@ void GraphInference::collect_lambda_params(FlowGraph& graph, FlowNode& node,
             auto* src_node = idx.source_node(inp.get());
             if (src_node) {
                 bool is_lambda_grab = (src_pin->direction == FlowPin::LambdaGrab);
-                if (!is_lambda_grab)
-                    collect_lambda_params(graph, *src_node, params, visited);
+                if (is_lambda_grab) continue;
+
+                // If the source node is in the caller scope (executed before lambda capture),
+                // it's a capture — don't recurse into it
+                if (caller_scope && caller_scope->count(src_node->guid)) continue;
+
+                collect_lambda_params(graph, *src_node, params, visited, caller_scope);
             }
         }
     }
 
     // 2. Side bang (post_bang): follow chain to downstream nodes
-    follow_bang_chain(graph, node.bang_pin.id, params, visited);
+    follow_bang_chain(graph, node.bang_pin.id, params, visited, caller_scope);
 
     // 3. Output bangs (left to right): follow each bang output's chain
     for (auto& bout : node.nexts) {
-        follow_bang_chain(graph, bout->id, params, visited);
+        follow_bang_chain(graph, bout->id, params, visited, caller_scope);
     }
 }
 
