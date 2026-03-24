@@ -129,6 +129,67 @@ std::vector<std::string> GraphInference::run(FlowGraph& graph) {
         }
     }
 
+    // Check for unconnected required inputs on nodes in the execution flow
+    for (auto& node : graph.nodes) {
+        if (!node.error.empty() || node.shadow) continue;
+        auto* nt = find_node_type(node.type_id);
+        if (!nt || nt->is_declaration) continue;
+
+        // Skip nodes not in any execution flow
+        bool in_flow = false;
+        for (auto& t : node.triggers)
+            if (idx.source_pin(t.get())) { in_flow = true; break; }
+        // Also check if it's a lambda root (as_lambda connected)
+        if (!in_flow) {
+            for (auto& link : graph.links)
+                if (link.from_pin == node.lambda_grab.id) { in_flow = true; break; }
+        }
+        // Event nodes are always in flow
+        if (nt->is_event) in_flow = true;
+        // Data-dependency nodes: if any output feeds another node, this node is
+        // consumed and should be checked — but only if it has at least one
+        // connected descriptor input. Nodes with ALL inputs unconnected are
+        // lambda parameter entry points, not missing-connection bugs.
+        if (!in_flow) {
+            bool has_any_connected_input = false;
+            int desc_count = std::min((int)node.inputs.size(), nt->inputs);
+            for (int i = 0; i < desc_count; i++) {
+                if (node.inputs[i]->direction == FlowPin::Lambda) continue;
+                if (idx.source_pin(node.inputs[i].get()) ||
+                    (i < (int)node.parsed_exprs.size() && node.parsed_exprs[i]))
+                    { has_any_connected_input = true; break; }
+            }
+            if (has_any_connected_input) {
+                for (auto& out : node.outputs) {
+                    for (auto& link : graph.links)
+                        if (link.from_pin == out->id) { in_flow = true; break; }
+                    if (in_flow) break;
+                }
+            }
+        }
+        if (!in_flow) continue;
+
+        // Only check descriptor-defined inputs (up to nt->inputs count).
+        // Pins beyond that are dynamically-added lambda parameters whose
+        // connectivity is validated by the lambda type check instead.
+        int check_count = std::min((int)node.inputs.size(), nt->inputs);
+        for (int i = 0; i < check_count; i++) {
+            auto& pin = node.inputs[i];
+            if (pin->direction == FlowPin::Lambda) continue;
+
+            bool has_source = false;
+            if (i < (int)node.parsed_exprs.size() && node.parsed_exprs[i])
+                has_source = true;
+            else if (idx.source_pin(pin.get()))
+                has_source = true;
+
+            if (!has_source) {
+                node.error = "Input '" + pin->name + "' is not connected";
+                break;
+            }
+        }
+    }
+
     // Collect all errors
     for (auto& node : graph.nodes) {
         if (!node.error.empty())
@@ -504,12 +565,12 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
 
         if (node.type_id == NodeTypeID::Select) {
             // Resolve types from inline exprs or input pins
-            auto get_arg_type = [&](int idx) -> TypePtr {
-                if (idx < (int)node.parsed_exprs.size() && node.parsed_exprs[idx] &&
-                    node.parsed_exprs[idx]->resolved_type)
-                    return node.parsed_exprs[idx]->resolved_type;
-                if (idx < (int)node.inputs.size() && node.inputs[idx]->resolved_type)
-                    return node.inputs[idx]->resolved_type;
+            auto get_arg_type = [&](int arg_idx) -> TypePtr {
+                if (arg_idx < (int)node.parsed_exprs.size() && node.parsed_exprs[arg_idx] &&
+                    node.parsed_exprs[arg_idx]->resolved_type)
+                    return node.parsed_exprs[arg_idx]->resolved_type;
+                if (arg_idx < (int)node.inputs.size() && node.inputs[arg_idx]->resolved_type)
+                    return node.inputs[arg_idx]->resolved_type;
                 return nullptr;
             };
 
@@ -781,11 +842,55 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
                     if (lambda_root) break;
                 }
 
+                // Build caller scope: nodes in the execution ancestry before the lock.
+                // For lock! (bang): walk backward from triggers.
+                // For lock (non-bang): walk backward from whoever captures this node's as_lambda.
+                std::set<std::string> caller_scope;
+                {
+                    std::vector<FlowNode*> work;
+                    // Seed from triggers (lock! has triggers, lock doesn't)
+                    for (auto& trig : node.triggers) {
+                        auto* src_n = idx.source_node(trig.get());
+                        if (src_n) work.push_back(src_n);
+                    }
+                    // Seed from the node that captures this node's as_lambda
+                    for (auto& link : graph.links) {
+                        if (link.from_pin == node.lambda_grab.id && link.to_node) {
+                            // The capture node and its ancestors are in caller scope
+                            work.push_back(link.to_node);
+                        }
+                    }
+                    // Seed from non-lambda, non-as_lambda data inputs
+                    for (auto& inp : node.inputs) {
+                        if (inp->direction == FlowPin::Lambda) continue;
+                        auto* src_pin = idx.source_pin(inp.get());
+                        if (src_pin && src_pin->direction == FlowPin::LambdaGrab) continue;
+                        auto* src_n = idx.source_node(inp.get());
+                        if (src_n) work.push_back(src_n);
+                    }
+                    while (!work.empty()) {
+                        auto* n = work.back(); work.pop_back();
+                        if (caller_scope.count(n->guid)) continue;
+                        caller_scope.insert(n->guid);
+                        for (auto& trig : n->triggers) {
+                            auto* src_n = idx.source_node(trig.get());
+                            if (src_n) work.push_back(src_n);
+                        }
+                        for (auto& inp : n->inputs) {
+                            if (inp->direction == FlowPin::Lambda) continue;
+                            auto* src_pin = idx.source_pin(inp.get());
+                            if (src_pin && src_pin->direction == FlowPin::LambdaGrab) continue;
+                            auto* src_n = idx.source_node(inp.get());
+                            if (src_n) work.push_back(src_n);
+                        }
+                    }
+                }
+
                 // Collect lambda params to determine how many extra inputs lock needs
                 std::vector<FlowPin*> lambda_params;
                 if (lambda_root) {
                     std::set<std::string> visited;
-                    collect_lambda_params(graph, *lambda_root, lambda_params, visited);
+                    collect_lambda_params(graph, *lambda_root, lambda_params, visited, &caller_scope);
                 }
 
                 // Build expected function type from lambda params
