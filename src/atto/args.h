@@ -3,6 +3,7 @@
 #include <vector>
 #include <variant>
 #include <map>
+#include <memory>
 #include <cstdint>
 #include <algorithm>
 
@@ -68,5 +69,18 @@ int find_max_port_ref(const std::string& s);
 // Parse a single token into a FlowArg
 FlowArg parse_token(const std::string& tok);
 
-// Parse a full argument string
+// Parse a full argument string (legacy wrapper)
 ParsedArgs parse_args(const std::string& args_str, bool is_expr = false);
+
+// Split an args string into singular expressions (space-delimited, aware of () {} "" nesting).
+// Returns vector<string> on success, or error string on failure (mismatched parens/braces/quotes).
+using SplitResult = std::variant<std::vector<std::string>, std::string>;
+SplitResult split_args(const std::string& args_str);
+
+// Parse pre-split expressions into ParsedArgs.
+// Returns unique_ptr<ParsedArgs> on success, or error string on failure.
+using ParseResult = std::variant<std::unique_ptr<ParsedArgs>, std::string>;
+ParseResult parse_args_v2(const std::vector<std::string>& exprs, bool is_expr = false);
+
+// Reconstruct a space-separated args string from a ParsedArgs
+std::string reconstruct_args_str(const ParsedArgs& args);

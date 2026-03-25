@@ -5,39 +5,47 @@
 #include "shadow.h"
 #include "inference.h"
 #include "type_utils.h"
+#include <cstdio>
 
-FlowNode& GraphBuilder::add(const std::string& guid, const std::string& type, const std::string& args,
+// ─── GraphBuilder ───
+
+FlowNode& GraphBuilder::add(const std::string& id, NodeTypeID type, std::unique_ptr<ParsedArgs> parsed_args,
                              int num_inputs, int num_outputs) {
-    auto* nt = find_node_type(type.c_str());
-    bool is_expr = type == "expr";
+    if (!parsed_args)
+        throw std::invalid_argument("GraphBuilder::add: parsed_args must not be null");
+
+    auto* nt = find_node_type(type);
+    bool is_expr = is_any_of(type, NodeTypeID::Expr, NodeTypeID::ExprBang);
     int di = nt ? nt->inputs : 0;
     int nbi = nt ? nt->num_triggers : 0;
     int nbo = nt ? nt->num_nexts : 0;
     int no = (num_outputs >= 0) ? num_outputs : (nt ? nt->outputs : 1);
 
+    std::string args_str = reconstruct_args_str(*parsed_args);
+
     FlowNode node;
     node.id = graph.next_node_id();
-    node.guid = guid;
-    node.type_id = node_type_id_from_string(type.c_str());
-    node.args = args;
+    node.node_id = id;
+    node.guid = (id.size() > 1 && id[0] == '$') ? id.substr(1) : id;
+    node.type_id = type;
+    node.args = args_str;
     node.position = {0, 0};
 
     for (int i = 0; i < nbi; i++)
         node.triggers.push_back(make_pin("", "bang_in" + std::to_string(i), "", nullptr, FlowPin::BangTrigger));
 
     if (is_expr) {
-        auto slots = scan_slots(args);
-        int ni = (num_inputs >= 0) ? num_inputs : slots.total_pin_count(di);
+        int ni = (num_inputs >= 0) ? num_inputs : parsed_args->total_pin_count(di);
         for (int i = 0; i < ni; i++) {
-            bool il = slots.is_lambda_slot(i);
+            bool il = parsed_args->is_lambda_slot(i);
             std::string pn = il ? ("@" + std::to_string(i)) : std::to_string(i);
             node.inputs.push_back(make_pin("", pn, "", nullptr, il ? FlowPin::Lambda : FlowPin::Input));
         }
-        if (!args.empty() && num_outputs < 0) {
-            auto tokens = tokenize_args(args, false);
+        if (!args_str.empty() && num_outputs < 0) {
+            auto tokens = tokenize_args(args_str, false);
             no = std::max(1, (int)tokens.size());
         }
-    } else if (type == "cast" || type == "new") {
+    } else if (is_any_of(type, NodeTypeID::Cast, NodeTypeID::New)) {
         int ni = (num_inputs >= 0) ? num_inputs : di;
         for (int i = 0; i < ni; i++) {
             std::string pn; std::string pt; bool il = false;
@@ -49,16 +57,15 @@ FlowNode& GraphBuilder::add(const std::string& guid, const std::string& type, co
             node.inputs.push_back(make_pin("", pn, pt, nullptr, il ? FlowPin::Lambda : FlowPin::Input));
         }
     } else {
-        auto info = compute_inline_args(args, di);
-        if (!info.error.empty()) node.error = info.error;
-        int ref_pins = (info.pin_slots.max_slot >= 0) ? (info.pin_slots.max_slot + 1) : 0;
+        int ref_pins = (parsed_args->max_slot >= 0) ? (parsed_args->max_slot + 1) : 0;
         if (num_inputs >= 0) ref_pins = num_inputs;
         for (int i = 0; i < ref_pins; i++) {
-            bool il = info.pin_slots.is_lambda_slot(i);
+            bool il = parsed_args->is_lambda_slot(i);
             std::string pn = il ? ("@" + std::to_string(i)) : std::to_string(i);
             node.inputs.push_back(make_pin("", pn, "", nullptr, il ? FlowPin::Lambda : FlowPin::Input));
         }
-        for (int i = info.num_inline_args; i < di; i++) {
+        int num_inline = (int)parsed_args->args.size();
+        for (int i = num_inline; i < di; i++) {
             std::string pn; std::string pt; bool il = false;
             if (nt && nt->input_ports && i < nt->inputs) {
                 pn = nt->input_ports[i].name;
@@ -86,8 +93,8 @@ void GraphBuilder::link(const std::string& from, const std::string& to) {
     graph.add_link(from, to);
 }
 
-FlowNode* GraphBuilder::find(const std::string& guid) {
-    for (auto& n : graph.nodes) if (n.guid == guid) return &n;
+FlowNode* GraphBuilder::find(const std::string& id) {
+    for (auto& n : graph.nodes) if (n.guid == id || n.node_id == id) return &n;
     return nullptr;
 }
 
@@ -107,4 +114,59 @@ std::vector<std::string> GraphBuilder::run_full_pipeline() {
     generate_shadow_nodes(graph);
     GraphInference inference(pool);
     return inference.run(graph);
+}
+
+// ─── Deserializer ───
+
+static FlowNode& make_error_node(FlowGraph& graph, const std::string& id,
+                                  const std::string& type, const std::string& args_str,
+                                  const std::string& error_msg) {
+    FlowNode node;
+    node.id = graph.next_node_id();
+    node.node_id = id;
+    node.guid = (id.size() > 1 && id[0] == '$') ? id.substr(1) : id;
+    node.type_id = NodeTypeID::Error;
+    node.args = type + " " + args_str;
+    node.error = error_msg;
+    node.position = {0, 0};
+    node.rebuild_pin_ids();
+    graph.nodes.push_back(std::move(node));
+    return graph.nodes.back();
+}
+
+FlowNode& Deserializer::add(const std::string& id, const std::string& type, const std::string& args_str,
+                              int num_inputs, int num_outputs) {
+    NodeTypeID type_id = node_type_id_from_string(type.c_str());
+
+    if (type_id == NodeTypeID::Unknown) {
+        return make_error_node(builder->graph, id, type, args_str, "Unknown node type: " + type);
+    }
+
+    // Labels and errors don't need parsing
+    if (is_any_of(type_id, NodeTypeID::Label, NodeTypeID::Error)) {
+        auto parsed = std::make_unique<ParsedArgs>();
+        if (!args_str.empty()) {
+            parsed->args.push_back(ArgString{args_str});
+            parsed->has_any_args = true;
+        }
+        return builder->add(id, type_id, std::move(parsed), num_inputs, num_outputs);
+    }
+
+    // Split args
+    auto split_result = split_args(args_str);
+    if (auto* err = std::get_if<std::string>(&split_result)) {
+        return make_error_node(builder->graph, id, type, args_str, *err);
+    }
+
+    auto& exprs = std::get<std::vector<std::string>>(split_result);
+    bool is_expr = is_any_of(type_id, NodeTypeID::Expr, NodeTypeID::ExprBang);
+
+    // Parse args
+    auto parse_result = parse_args_v2(exprs, is_expr);
+    if (auto* err = std::get_if<std::string>(&parse_result)) {
+        return make_error_node(builder->graph, id, type, args_str, *err);
+    }
+
+    auto parsed = std::get<std::unique_ptr<ParsedArgs>>(std::move(parse_result));
+    return builder->add(id, type_id, std::move(parsed), num_inputs, num_outputs);
 }

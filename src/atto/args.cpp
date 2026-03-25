@@ -264,3 +264,140 @@ void FlowNode::parse_args() {
         inline_meta.ref_pin_count = (info.pin_slots.max_slot >= 0) ? (info.pin_slots.max_slot + 1) : 0;
     }
 }
+
+// ─── split_args: split string into singular expressions ───
+
+SplitResult split_args(const std::string& args_str) {
+    std::vector<std::string> result;
+    std::string current;
+    int paren_depth = 0;
+    int brace_depth = 0;
+    bool in_string = false;
+    bool escape = false;
+
+    for (size_t i = 0; i < args_str.size(); i++) {
+        char c = args_str[i];
+
+        if (escape) {
+            current += c;
+            escape = false;
+            continue;
+        }
+        if (c == '\\' && in_string) {
+            escape = true;
+            current += c;
+            continue;
+        }
+        if (c == '"') {
+            in_string = !in_string;
+            current += c;
+            continue;
+        }
+        if (in_string) {
+            current += c;
+            continue;
+        }
+
+        if (c == '(') { paren_depth++; current += c; continue; }
+        if (c == ')') {
+            paren_depth--;
+            if (paren_depth < 0)
+                return std::string("Mismatched ')' at position " + std::to_string(i));
+            current += c;
+            continue;
+        }
+        if (c == '{') { brace_depth++; current += c; continue; }
+        if (c == '}') {
+            brace_depth--;
+            if (brace_depth < 0)
+                return std::string("Mismatched '}' at position " + std::to_string(i));
+            current += c;
+            continue;
+        }
+
+        if ((c == ' ' || c == '\t') && paren_depth == 0 && brace_depth == 0) {
+            if (!current.empty()) {
+                result.push_back(current);
+                current.clear();
+            }
+            continue;
+        }
+
+        current += c;
+    }
+
+    if (in_string)
+        return std::string("Unterminated string literal");
+    if (paren_depth > 0)
+        return std::string("Unclosed '(' — " + std::to_string(paren_depth) + " level(s) deep");
+    if (brace_depth > 0)
+        return std::string("Unclosed '{' — " + std::to_string(brace_depth) + " level(s) deep");
+
+    if (!current.empty())
+        result.push_back(current);
+
+    return result;
+}
+
+// ─── parse_args_v2: parse pre-split expressions ───
+
+ParseResult parse_args_v2(const std::vector<std::string>& exprs, bool is_expr) {
+    auto result = std::make_unique<ParsedArgs>();
+
+    auto register_slot = [&](int index, bool is_lambda) {
+        result->slots[index] = is_lambda;
+        result->max_slot = std::max(result->max_slot, index);
+    };
+
+    // Scan all expressions for $N and @N refs
+    for (auto& expr : exprs) {
+        for (size_t i = 0; i < expr.size(); i++) {
+            if ((expr[i] == '$' || expr[i] == '@') && i + 1 < expr.size() &&
+                expr[i + 1] >= '0' && expr[i + 1] <= '9') {
+                bool is_lambda = (expr[i] == '@');
+                int n = 0;
+                size_t j = i + 1;
+                while (j < expr.size() && expr[j] >= '0' && expr[j] <= '9') {
+                    n = n * 10 + (expr[j] - '0');
+                    j++;
+                }
+                register_slot(n, is_lambda);
+            }
+        }
+    }
+
+    for (auto& expr : exprs) {
+        result->args.push_back(parse_token(expr));
+    }
+    result->has_any_args = !exprs.empty();
+
+    return result;
+}
+
+// ─── reconstruct_args_str ───
+
+std::string reconstruct_args_str(const ParsedArgs& args) {
+    std::string result;
+    for (auto& a : args.args) {
+        if (!result.empty()) result += " ";
+        std::visit([&](auto& v) {
+            using T = std::decay_t<decltype(v)>;
+            if constexpr (std::is_same_v<T, ArgPortRef>) result += "$" + std::to_string(v.index);
+            else if constexpr (std::is_same_v<T, ArgLambdaRef>) result += "@" + std::to_string(v.index);
+            else if constexpr (std::is_same_v<T, ArgVariable>) result += v.name;
+            else if constexpr (std::is_same_v<T, ArgEnum>) result += "#" + v.enum_name + "." + v.value_name;
+            else if constexpr (std::is_same_v<T, ArgNumber>) {
+                if (v.is_float) {
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "%g", v.value);
+                    result += buf;
+                } else {
+                    result += std::to_string((long long)v.value);
+                }
+            }
+            else if constexpr (std::is_same_v<T, ArgString>) result += "\"" + v.value + "\"";
+            else if constexpr (std::is_same_v<T, ArgExpr>) result += v.expr;
+        }, a);
+    }
+    return result;
+}
