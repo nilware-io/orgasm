@@ -5882,6 +5882,100 @@ TEST(ffi_has_parsed_exprs) {
 }
 
 // ============================================================
+// Serial v2 format tests
+// ============================================================
+
+TEST(serial_v2_roundtrip) {
+    // Build a simple graph in memory, save as v2, reload
+    FlowGraph g1;
+    // Create two expr nodes and connect them
+    auto n1_id = g1.add_node(generate_guid(), {100, 100}, 1, 1);
+    auto n2_id = g1.add_node(generate_guid(), {200, 200}, 1, 1);
+    auto& n1 = g1.nodes[0];
+    auto& n2 = g1.nodes[1];
+    n1.type_id = NodeTypeID::Expr;
+    n1.args = "42";
+    n1.node_id = "$const-42";
+    n1.rebuild_pin_ids();
+    n1.parse_args();
+    n2.type_id = NodeTypeID::Expr;
+    n2.args = "$0+1";
+    n2.node_id = "$add-one";
+    n2.rebuild_pin_ids();
+    n2.parse_args();
+    // Connect n1.out0 -> n2.0
+    g1.add_link(n1.outputs[0]->id, n2.inputs[0]->id);
+    // Set net name on the link
+    g1.links[0].net_name = "$val-42";
+
+    // Save as v2
+    std::string v2_str = save_atto_string(g1);
+
+    // Verify header
+    ASSERT(v2_str.find("# version instrument@atto:0") == 0);
+
+    // Verify node IDs appear
+    ASSERT(v2_str.find("$const-42") != std::string::npos);
+    ASSERT(v2_str.find("$add-one") != std::string::npos);
+
+    // Verify no connections= line
+    ASSERT(v2_str.find("connections =") == std::string::npos);
+
+    // Verify inputs/outputs appear
+    ASSERT(v2_str.find("inputs =") != std::string::npos || v2_str.find("outputs =") != std::string::npos);
+
+    // Reload
+    FlowGraph g2;
+    ASSERT(load_atto_string(v2_str, g2));
+    // Should have same number of nodes (non-imported)
+    int non_imported_1 = 0, non_imported_2 = 0;
+    for (auto& n : g1.nodes) if (!n.imported) non_imported_1++;
+    for (auto& n : g2.nodes) if (!n.imported) non_imported_2++;
+    ASSERT_EQ(non_imported_1, non_imported_2);
+    ASSERT_EQ(g2.links.size(), g1.links.size());
+}
+
+TEST(serial_v2_version_header) {
+    std::string v2 = "# version instrument@atto:0\n\n[[node]]\nid = \"$test\"\ntype = \"expr\"\nargs = [\"42\"]\nposition = [0, 0]\n";
+    FlowGraph g;
+    ASSERT(load_atto_string(v2, g));
+    ASSERT_EQ(g.nodes.size(), (size_t)1);
+    ASSERT_EQ(g.nodes[0].node_id, "$test");
+}
+
+TEST(serial_v1_auto_migration) {
+    std::string v1 = "version = \"attoprog@1\"\n\n[[node]]\nguid = \"abc123\"\ntype = \"expr\"\nargs = [\"42\"]\nposition = [0, 0]\n";
+    FlowGraph g;
+    ASSERT(load_atto_string(v1, g));
+    ASSERT_EQ(g.nodes.size(), (size_t)1);
+    // Should have been assigned a $auto- node_id
+    ASSERT(g.nodes[0].node_id.find("$auto-") == 0);
+}
+
+TEST(serial_v2_net_names_preserved) {
+    // Create graph with named net
+    FlowGraph g1;
+    g1.add_node(generate_guid(), {0, 0}, 0, 1);
+    g1.add_node(generate_guid(), {100, 0}, 1, 0);
+    auto& n1 = g1.nodes[0];
+    auto& n2 = g1.nodes[1];
+    n1.type_id = NodeTypeID::Expr; n1.args = "1"; n1.node_id = "$src";
+    n2.type_id = NodeTypeID::Expr; n2.args = "$0"; n2.node_id = "$dst";
+    n1.rebuild_pin_ids(); n2.rebuild_pin_ids();
+    n1.parse_args(); n2.parse_args();
+    g1.add_link(n1.outputs[0]->id, n2.inputs[0]->id);
+    g1.links[0].net_name = "$my-signal";
+
+    std::string v2 = save_atto_string(g1);
+    ASSERT(v2.find("$my-signal") != std::string::npos);
+
+    FlowGraph g2;
+    ASSERT(load_atto_string(v2, g2));
+    ASSERT_EQ(g2.links.size(), (size_t)1);
+    ASSERT_EQ(g2.links[0].net_name, "$my-signal");
+}
+
+// ============================================================
 // Main
 // ============================================================
 

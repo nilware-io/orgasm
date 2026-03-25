@@ -51,7 +51,8 @@ struct FlowNode {
     FlowNode& operator=(const FlowNode&) = delete;
 
     int id = 0;                   // internal numeric id (for UI operations)
-    std::string guid;             // unique identifier for serialization/connections
+    std::string guid;             // unique identifier for internal use (auto-generated from node_id if needed)
+    std::string node_id;          // human-readable ID e.g. "$gen-expr" (v2 format)
     NodeTypeID type_id = NodeTypeID::Unknown;  // node type enum
     std::string args;             // arguments string
     Vec2 position = {0, 0};     // canvas coordinates
@@ -124,6 +125,7 @@ struct FlowLink {
     int id = 0;
     std::string from_pin; // output pin id string (for serialization)
     std::string to_pin;   // input pin id string (for serialization)
+    std::string net_name;  // named net this link belongs to (v2 format, e.g. "$my-signal")
     std::string error;    // non-empty if this link has a type error (set during inference)
     // Resolved pointers — populated by GraphIndex::rebuild(), not serialized
     FlowPin* from = nullptr;
