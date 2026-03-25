@@ -1,10 +1,5 @@
 # version instrument@atto:0
 
-[viewport]
-x = -2375.68
-y = -872.537
-zoom = 2.14359
-
 [[node]]
 id = "$auto-934e3b98bb914e95"
 type = "decl_type"

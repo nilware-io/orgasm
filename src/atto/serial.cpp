@@ -408,7 +408,7 @@ static bool load_v1_stream(std::istream& f, FlowGraph& graph, const std::string&
 // ─── V2 Loader (instrument@atto:0) ───
 
 static bool load_v2_stream(std::istream& f, FlowGraph& graph, const std::string& base_path) {
-    bool in_node = false, in_viewport = false;
+    bool in_node = false;
     std::string cur_id, cur_type;
     std::vector<std::string> cur_args;
     std::vector<std::string> cur_inputs, cur_outputs;
@@ -479,30 +479,10 @@ static bool load_v2_stream(std::istream& f, FlowGraph& graph, const std::string&
             flush_node();
             if (load_error) break;
             in_node = true;
-            in_viewport = false;
             continue;
         }
 
-        if (line == "[viewport]") {
-            flush_node();
-            in_node = false;
-            in_viewport = true;
-            continue;
-        }
-
-        if (line.find("# version") == 0) continue; // already parsed
-
-        if (in_viewport) {
-            auto eq = line.find('=');
-            if (eq == std::string::npos) continue;
-            std::string key = trim(line.substr(0, eq));
-            std::string val = trim(line.substr(eq + 1));
-            if (key == "x") graph.viewport_x = std::stof(val);
-            else if (key == "y") graph.viewport_y = std::stof(val);
-            else if (key == "zoom") graph.viewport_zoom = std::stof(val);
-            graph.has_viewport = true;
-            continue;
-        }
+        if (line.find("# version") == 0) continue;
 
         if (!in_node) continue;
 
@@ -685,7 +665,9 @@ bool load_atto(const std::string& path, FlowGraph& graph) {
         fprintf(stderr, "Cannot open %s\n", path.c_str());
         return false;
     }
-    return load_atto_stream(f, graph, path);
+    bool ok = load_atto_stream(f, graph, path);
+    if (ok) load_atto_meta(path, graph);
+    return ok;
 }
 
 bool load_atto_string(const std::string& data, FlowGraph& graph) {
@@ -697,11 +679,6 @@ bool load_atto_string(const std::string& data, FlowGraph& graph) {
 
 void save_atto_stream(std::ostream& f, const FlowGraph& graph) {
     f << "# version instrument@atto:0\n\n";
-
-    f << "[viewport]\n";
-    f << "x = " << graph.viewport_x << "\n";
-    f << "y = " << graph.viewport_y << "\n";
-    f << "zoom = " << graph.viewport_zoom << "\n\n";
 
     for (auto& node : graph.nodes) {
         if (node.imported) continue;
@@ -861,6 +838,66 @@ bool save_atto(const std::string& path, const FlowGraph& graph) {
         return false;
     }
     save_atto_stream(f, graph);
+    save_atto_meta(path, graph);
     printf("Saved %zu nodes, %zu links to %s\n", graph.nodes.size(), graph.links.size(), path.c_str());
+    return true;
+}
+
+// ─── Meta file (.atto/<filename>.yaml) ───
+
+static std::string meta_path_for(const std::string& atto_path) {
+    namespace fs = std::filesystem;
+    fs::path p(atto_path);
+    fs::path dir = p.parent_path() / ".atto";
+    fs::path meta = dir / (p.filename().string() + ".yaml");
+    return meta.string();
+}
+
+bool load_atto_meta(const std::string& atto_path, FlowGraph& graph) {
+    std::string path = meta_path_for(atto_path);
+    std::ifstream f(path);
+    if (!f.is_open()) return false;
+
+    std::string line;
+    while (std::getline(f, line)) {
+        line = trim(line);
+        if (line.empty() || line[0] == '#') continue;
+        auto colon = line.find(':');
+        if (colon == std::string::npos) continue;
+        std::string key = trim(line.substr(0, colon));
+        std::string val = trim(line.substr(colon + 1));
+        if (key == "viewport_x") graph.viewport_x = std::stof(val);
+        else if (key == "viewport_y") graph.viewport_y = std::stof(val);
+        else if (key == "viewport_zoom") graph.viewport_zoom = std::stof(val);
+    }
+    graph.has_viewport = true;
+    return true;
+}
+
+bool save_atto_meta(const std::string& atto_path, const FlowGraph& graph) {
+    namespace fs = std::filesystem;
+    std::string path = meta_path_for(atto_path);
+
+    // Create .atto directory if needed
+    fs::path dir = fs::path(path).parent_path();
+    if (!fs::exists(dir)) {
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        if (ec) {
+            fprintf(stderr, "Cannot create meta dir %s: %s\n", dir.string().c_str(), ec.message().c_str());
+            return false;
+        }
+    }
+
+    std::ofstream f(path);
+    if (!f.is_open()) {
+        fprintf(stderr, "Cannot write meta %s\n", path.c_str());
+        return false;
+    }
+
+    f << "# Editor metadata for " << fs::path(atto_path).filename().string() << "\n";
+    f << "viewport_x: " << graph.viewport_x << "\n";
+    f << "viewport_y: " << graph.viewport_y << "\n";
+    f << "viewport_zoom: " << graph.viewport_zoom << "\n";
     return true;
 }

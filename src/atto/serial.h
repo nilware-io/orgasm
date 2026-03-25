@@ -14,3 +14,7 @@ bool load_atto_stream(std::istream& f, FlowGraph& graph, const std::string& base
 void save_atto_stream(std::ostream& f, const FlowGraph& graph);
 std::string save_atto_string(const FlowGraph& graph);
 bool save_atto(const std::string& path, const FlowGraph& graph);
+
+// Editor metadata (viewport) saved to .atto/<filename>.yaml
+bool load_atto_meta(const std::string& atto_path, FlowGraph& graph);
+bool save_atto_meta(const std::string& atto_path, const FlowGraph& graph);
