@@ -1,8 +1,8 @@
 # Organic Assembler
 
-An operating system for instruments, written in attolang. Instruments are visual dataflow programs — authored as node graphs in the **attoflow** editor, compiled to native code, and run in real time.
+An Operating System for Instruments, written in attolang. Instruments are multimodal dataflow programs — authored as node graphs possibly using the **attoflow** editor, compiled, and run in real time.
 
-Each instrument is a self-contained `.atto` program that defines its audio synthesis, event handling, and UI. The system compiles these programs to C++ and runs them with hot-reload support.
+Each instrument is a self-contained `.atto` program that defines its Functionality. The System compiles these programs runs them with hot-reload support.
 
 See an [example instrument](scenes/klavier/main.atto) and the full [language specification](docs/attolang.md).
 
