@@ -1,57 +1,65 @@
 version = "nanoprog@1"
 
 [viewport]
-x = -1018.19
-y = -756.948
-zoom = 0.90909
+x = -711.437
+y = -124.687
+zoom = 1.61051
 
 [[node]]
 guid = "934e3b98bb914e95"
 type = "decl_type"
 args = ["osc_res", "s:f32", "e:bool"]
 position = [750.93, 375.328]
+connections = ["934e3b98bb914e95.bang0->e073eb5950485587.bang_in0"]
 
 [[node]]
 guid = "e073eb5950485587"
 type = "decl_type"
 args = ["gen_fn", "(osc:&osc_def)", "->", "osc_res"]
 position = [751.91, 422.962]
+connections = ["e073eb5950485587.bang0->fe155835bba6cd45.bang_in0"]
 
 [[node]]
 guid = "fe155835bba6cd45"
 type = "decl_type"
 args = ["stop_fn", "(osc:&osc_def)", "->", "void"]
-position = [751.32, 466.799]
+position = [754.325, 467.55]
+connections = ["fe155835bba6cd45.bang0->09f161f1210cec4f.bang_in0"]
 
 [[node]]
 guid = "09f161f1210cec4f"
 type = "decl_type"
 args = ["osc_def", "gen:gen_fn", "stop:stop_fn", "p:f32", "pstep:f32", "a:f32", "astep:f32"]
 position = [754.46, 510.991]
+connections = ["09f161f1210cec4f.bang0->c0fbc2b794fa65b4.bang_in0"]
 
 [[node]]
 guid = "c0fbc2b794fa65b4"
 type = "decl_type"
 args = ["key_set", "map<u8,", "^list_iterator<osc_def>>"]
 position = [754.64, 561.922]
+connections = ["c0fbc2b794fa65b4.bang0->e530be85f0c2565e.bang_in0"]
 
 [[node]]
 guid = "e530be85f0c2565e"
 type = "decl_type"
 args = ["osc_list", "list<osc_def>"]
 position = [755.57, 606.798]
+connections = ["e530be85f0c2565e.bang0->b11adccc2e0b937c.bang_in0"]
 
 [[node]]
 guid = "b11adccc2e0b937c"
 type = "decl_var"
 args = ["keys", "key_set"]
 position = [753.51, 697.467]
+connections = ["b11adccc2e0b937c.bang0->91b1885ec31bca0d.bang_in0"]
 
 [[node]]
 guid = "91b1885ec31bca0d"
 type = "decl_var"
 args = ["oscs", "osc_list"]
 position = [754.71, 742.669]
+connections = ["91b1885ec31bca0d.bang0->0e02c497002f40c2.bang_in0"]
 
 [[node]]
 guid = "831e483b4e4602dc"
@@ -180,19 +188,19 @@ connections = ["59970d1e2f56ca0f.out0->a81d5e94c0631e58.2"]
 guid = "cd25eae0b4b57597"
 type = "label"
 args = ["Types"]
-position = [745.76, 333.357]
+position = [766.046, 335.611]
 
 [[node]]
 guid = "bcf571394c110f9b"
 type = "label"
 args = ["globals"]
-position = [754.75, 663.398]
+position = [775.036, 657.387]
 
 [[node]]
 guid = "87b12613436dd250"
 type = "label"
 args = ["Events"]
-position = [1675.63, 343.249]
+position = [1690.66, 352.265]
 
 [[node]]
 guid = "b78d3f85fe8f654a"
@@ -202,7 +210,7 @@ connections = ["b78d3f85fe8f654a.out0->a81d5e94c0631e58.1"]
 
 [[node]]
 guid = "e74cec1135c3a130"
-type = "decl_local"
+type = "decl_var"
 args = ["mixs", "f32"]
 position = [3702.59, 1442.63]
 connections = ["e74cec1135c3a130.out0->1a6c0c7662614047.0", "e74cec1135c3a130.bang0->a8da10815e6d03ff.bang_in0", "e74cec1135c3a130.out0->436d853ee8e34fa5.0", "e74cec1135c3a130.out0->1a6c0c7662614047_s1.0"]
@@ -217,12 +225,14 @@ guid = "e22ffceeeeebc676"
 type = "decl_var"
 args = ["delay_line", "array<f32,48000>"]
 position = [1106.47, 690.426]
+connections = ["e22ffceeeeebc676.bang0->d48027929dca66a0.bang_in0"]
 
 [[node]]
 guid = "d48027929dca66a0"
 type = "decl_var"
 args = ["delay_line_pos", "s32"]
-position = [1107.75, 751.727]
+position = [1106.59, 745.558]
+connections = ["d48027929dca66a0.bang0->a250677580c18180.bang_in0"]
 
 [[node]]
 guid = "0a536bc07ab8e6ba"
@@ -255,13 +265,15 @@ connections = ["436d853ee8e34fa5.out0->809ab9a7f7fa1b7e.value", "436d853ee8e34fa
 guid = "a250677580c18180"
 type = "decl_var"
 args = ["delay_line_size", "s32"]
-position = [1111.46, 801.996]
+position = [1106.83, 797.369]
+connections = ["a250677580c18180.bang0->20115e980dcd5b53.bang_in0"]
 
 [[node]]
 guid = "20115e980dcd5b53"
 type = "decl_event"
 args = ["start", "(args:vector<string> envs:vector<string>)", "->", "void"]
 position = [1667.98, 389.477]
+connections = ["20115e980dcd5b53.bang0->1e3de9365a34db20.bang_in0"]
 
 [[node]]
 guid = "ddaf4497489a54c2"
@@ -282,6 +294,7 @@ guid = "0e02c497002f40c2"
 type = "decl_var"
 args = ["oscs_mutex", "mutex"]
 position = [756.636, 792.818]
+connections = ["0e02c497002f40c2.bang0->c5373cf3d77e7979.bang_in0"]
 
 [[node]]
 guid = "a8da10815e6d03ff"
@@ -294,13 +307,14 @@ connections = ["a8da10815e6d03ff.bang0->694aaecf19c1f260.bang_in0"]
 guid = "0352425ee9785174"
 type = "label"
 args = ["Imports"]
-position = [1681.12, 632.204]
+position = [1702.91, 641.22]
 
 [[node]]
 guid = "1e3de9365a34db20"
 type = "decl_import"
 args = ["std/imgui"]
 position = [1683.32, 681.704]
+connections = ["1e3de9365a34db20.bang0->9facb8e5368e52c0.bang_in0"]
 
 [[node]]
 guid = "scan_keys_node"
@@ -355,12 +369,14 @@ guid = "c5373cf3d77e7979"
 type = "decl_var"
 args = ["klavie_down", "(midi_key:u8 freq:f32)", "->", "void"]
 position = [757.37, 851.95]
+connections = ["c5373cf3d77e7979.bang0->48a2c13cec7e5013.bang_in0"]
 
 [[node]]
 guid = "48a2c13cec7e5013"
 type = "decl_var"
 args = ["klavie_up", "(midi_key:u8)", "->", "void"]
 position = [761, 914]
+connections = ["48a2c13cec7e5013.bang0->c17ebd09a44700e1.bang_in0"]
 
 [[node]]
 guid = "daa77173e91ec011"
@@ -459,19 +475,21 @@ connections = ["225009e132d0e7d5.out0->a3cda7b2eaa0cc3c.if_false"]
 guid = "9facb8e5368e52c0"
 type = "decl_import"
 args = ["std/gui"]
-position = [1687, 735]
+position = [1683.99, 735]
 
 [[node]]
 guid = "c17ebd09a44700e1"
 type = "decl_var"
 args = ["audio_tick", "()", "->", "void"]
 position = [763.229, 970.563]
+connections = ["c17ebd09a44700e1.bang0->50417175624d2751.bang_in0"]
 
 [[node]]
 guid = "50417175624d2751"
 type = "decl_var"
 args = ["video_tick", "()", "->", "void"]
 position = [766.535, 1028.41]
+connections = ["50417175624d2751.bang0->decl_on_quit.bang_in0"]
 
 [[node]]
 guid = "store_atick"
@@ -517,6 +535,7 @@ guid = "decl_on_quit"
 type = "decl_var"
 args = ["on_quit", "()", "->", "void"]
 position = [766.535, 1080]
+connections = ["decl_on_quit.bang0->e22ffceeeeebc676.bang_in0"]
 
 [[node]]
 guid = "56eb5d29abcb9fb0"
@@ -571,4 +590,10 @@ shadow = true
 args = ["2048*16"]
 position = [585.327, 1205.73]
 connections = ["45df349a6ae05f56_s1.out0->45df349a6ae05f56.value"]
+
+[[node]]
+guid = "f3643a745bd92067"
+type = "decl"
+position = [748.476, 286.206]
+connections = ["f3643a745bd92067.bang0->934e3b98bb914e95.bang_in0"]
 

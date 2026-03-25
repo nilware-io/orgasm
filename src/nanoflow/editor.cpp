@@ -564,13 +564,12 @@ void FlowEditorWindow::draw_node(ImDrawList* dl, FlowNode& node, ImVec2 origin) 
     }
 
     auto* nt = find_node_type(node.type_id);
-    bool is_structural = nt && nt->is_declaration;
     bool is_event = nt && nt->is_event;
 
     // Pins
     PinShape io_shape = PinShape::Signal;
     float pr = PIN_RADIUS * active().canvas_zoom;
-    if (!is_structural) {
+    {
         // Bang inputs (top, before data inputs)
         for (auto& pin : node.triggers) {
             ImVec2 pp = get_pin_pos(node, *pin, origin);
