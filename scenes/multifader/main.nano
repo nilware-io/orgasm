@@ -1,9 +1,9 @@
 version = "nanoprog@0"
 
 [viewport]
-x = -2987.89
-y = -1550.02
-zoom = 1.61051
+x = -6131.11
+y = -1999.86
+zoom = 1.4641
 
 [[node]]
 guid = "934e3b98bb914e95"
@@ -484,7 +484,7 @@ connections = ["store_atick.bang0->store_vtick.bang_in0"]
 guid = "store_vtick"
 type = "store!"
 args = ["$video_tick"]
-position = [4678.95, 1286.38]
+position = [4680.05, 1298.48]
 connections = ["store_vtick.bang0->dcdb8bb52c9d14ef.bang_in0"]
 
 [[node]]
@@ -549,7 +549,7 @@ guid = "39914660d17b5167"
 type = "call!"
 args = ["$imgui_slider_int", "\"Mutlifader Size\"", "$multifader_size", "4", "128"]
 position = [6063.67, 2007.49]
-connections = ["39914660d17b5167.bang0->a59d80498369a652.bang_in0", "39914660d17b5167.bang_in0->a51ae6d45b7a2ef9.fn"]
+connections = ["39914660d17b5167.bang0->a59d80498369a652.bang_in0", "39914660d17b5167.bang_in0->a51ae6d45b7a2ef9.fn", "39914660d17b5167.result->209892e6ebff530f.condition"]
 
 [[node]]
 guid = "209892e6ebff530f"
