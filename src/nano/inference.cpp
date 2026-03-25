@@ -13,13 +13,7 @@ std::vector<std::string> GraphInference::run(FlowGraph& graph) {
     // Phase 1.5: Clear declaration entries from symbol table (keep builtins)
     symbol_table.clear_declarations();
 
-    // Phase 2: Build type registry from decl_type nodes
-    build_registry(graph);
-
-    // Phase 3: Build inference context (var_types, named_types)
-    build_context(graph);
-
-    // Phase 4: Resolve pin types from type_name strings
+    // Phase 2: Resolve pin types from type_name strings
     resolve_pin_type_names(graph);
 
     // Phase 5: Fixed-point propagation
@@ -226,122 +220,6 @@ void GraphInference::clear_all(FlowGraph& graph) {
     for (auto& link : graph.links) link.error.clear();
 }
 
-void GraphInference::build_registry(FlowGraph& graph) {
-    registry.clear();
-    for (auto& node : graph.nodes) {
-        if (node.type_id != NodeTypeID::DeclType) continue;
-        std::string name = get_decl_name(node, graph);
-        if (name.empty()) continue;
-        std::string def = get_decl_type_str(node, graph);
-        if (def.empty()) continue;
-        // Classify: function type starts with '(', struct has top-level colons
-        auto def_tokens = tokenize_args(def, false);
-        bool is_func = !def_tokens.empty() && !def_tokens[0].empty() && def_tokens[0][0] == '(';
-        bool is_struct = false;
-        if (!is_func) {
-            for (auto& t : def_tokens) {
-                if (has_top_level_colon(t)) { is_struct = true; break; }
-            }
-        }
-        if (!is_struct) {
-            registry.register_type(name, def);
-        } else {
-            registry.register_type(name, "void");
-        }
-    }
-    registry.resolve_all();
-}
-
-// Helper: join tokens[start..] into a type string
-static std::string join_type_tokens(const std::vector<std::string>& tokens, size_t start) {
-    std::string type_str;
-    for (size_t i = start; i < tokens.size(); i++) {
-        if (!type_str.empty()) type_str += " ";
-        type_str += tokens[i];
-    }
-    return type_str;
-}
-
-void GraphInference::build_context(FlowGraph& graph) {
-    ctx.var_types.clear();
-    ctx.named_types.clear();
-
-    for (auto& node : graph.nodes) {
-        if (node.type_id == NodeTypeID::DeclVar) {
-            std::string name = get_decl_name(node, graph);
-            if (name.empty()) continue;
-            std::string type_str = get_decl_type_str(node, graph);
-            if (type_str.empty()) continue;
-            auto var_type = pool.intern(type_str);
-            ctx.var_types[name] = var_type;
-            if (var_type) {
-                auto ref_type = std::make_shared<TypeExpr>(*var_type);
-                ref_type->category = TypeCategory::Reference;
-                symbol_table.add(name, ref_type);
-            }
-        }
-    }
-    // Register FFI functions as global variables with function types
-    for (auto& node : graph.nodes) {
-        if (node.type_id == NodeTypeID::Ffi) {
-            std::string name = get_decl_name(node, graph);
-            std::string type_str = get_decl_type_str(node, graph);
-            if (!name.empty() && !type_str.empty()) {
-                auto fn_type = pool.intern(type_str);
-                if (fn_type && fn_type->kind == TypeKind::Function) {
-                    ctx.var_types[name] = fn_type;
-                    symbol_table.add(name, fn_type);
-                } else {
-                    node.error = "ffi: type must be a function type (got " + type_str + ")";
-                }
-            } else {
-                node.error = "ffi: requires <name> <function_type>";
-            }
-        }
-        if (node.type_id == NodeTypeID::DeclImport) {
-            // Extract path from shadow/parsed_exprs or wire connection
-            std::string path = get_decl_name(node, graph); // uses "path" pin via shadow lookup
-            // Strip quotes if present (raw token fallback)
-            if (path.size() >= 2 && path.front() == '"' && path.back() == '"')
-                path = path.substr(1, path.size() - 2);
-            if (!path.empty()) {
-                if (path.substr(0, 4) != "std/") {
-                    node.error = "decl_import: only std/ imports are currently supported (got " + path + ")";
-                }
-            }
-        }
-    }
-    for (auto& node : graph.nodes) {
-        if (node.type_id != NodeTypeID::DeclType) continue;
-        std::string name = get_decl_name(node, graph);
-        if (name.empty()) continue;
-        std::string type_str = get_decl_type_str(node, graph);
-        if (type_str.empty()) continue;
-        auto fields = parse_type_fields(node);
-        if (!fields.empty()) {
-            auto struct_type = std::make_shared<TypeExpr>();
-            struct_type->kind = TypeKind::Struct;
-            for (auto& f : fields) {
-                if (!f.resolved) f.resolved = pool.intern(f.type_name);
-                struct_type->fields.push_back({f.name, f.resolved});
-            }
-            ctx.named_types[name] = struct_type;
-            auto meta = std::make_shared<TypeExpr>();
-            meta->kind = TypeKind::MetaType;
-            meta->wrapped_type = struct_type;
-            symbol_table.add(name, meta);
-        } else {
-            auto resolved = registry.parsed.count(name) ? registry.parsed[name] : nullptr;
-            if (resolved) {
-                auto meta = std::make_shared<TypeExpr>();
-                meta->kind = TypeKind::MetaType;
-                meta->wrapped_type = resolved;
-                symbol_table.add(name, meta);
-            }
-        }
-    }
-}
-
 void GraphInference::resolve_pin_type_names(FlowGraph& graph) {
     auto resolve = [&](FlowPin& p) {
         if (p.resolved_type) return; // already resolved (e.g. set directly by type_utils)
@@ -395,42 +273,17 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
             NodeTypeID::Call, NodeTypeID::CallBang,
             NodeTypeID::Cast);
         if (!is_expr) {
-            // DeclVar needs output type inference
-            if (node.type_id == NodeTypeID::DeclVar) {
-                std::string name = get_decl_name(node, graph);
-                if (name.empty()) {
-                    if (!node.args.empty() && node.error.empty())
-                        node.error = "decl_var requires: name type";
-                    continue;
-                }
-                auto it = ctx.var_types.find(name);
-                if (it == ctx.var_types.end()) {
-                    if (node.error.empty())
-                        node.error = "decl_var requires: name type";
-                    continue;
-                }
-                if (it != ctx.var_types.end() && it->second && !node.outputs.empty()) {
-                    if (!node.outputs[0]->resolved_type || node.outputs[0]->resolved_type->is_generic) {
-                        auto ref_type = std::make_shared<TypeExpr>(*(it->second));
-                        ref_type->category = TypeCategory::Reference;
-                        node.outputs[0]->resolved_type = ref_type;
-                        changed = true;
-                    }
-                }
-                // Fall through to expression inference for validation
-            }
-            // Other declaration nodes: skip if no parsed_exprs to infer
             if (!nt) continue;
-            if (nt->is_declaration && node.type_id != NodeTypeID::DeclVar) {
+            // Declaration nodes: skip if no parsed_exprs to infer
+            if (nt->is_declaration) {
                 if (node.parsed_exprs.empty()) continue;
                 // Fall through to expression inference for validation
+            } else {
+                if (is_any_of(node.type_id, NodeTypeID::New, NodeTypeID::EventBang)) continue;
+                if (node.type_id == NodeTypeID::Label) continue;
+                if (node.args.empty() && !needs_type_propagation && !has_custom_output) continue;
+                if (nt->inputs == 0 && !needs_type_propagation && !has_custom_output) continue;
             }
-            if (!nt->is_declaration) {
-            if (is_any_of(node.type_id, NodeTypeID::New, NodeTypeID::EventBang)) continue;
-            if (node.type_id == NodeTypeID::Label) continue;
-            if (node.args.empty() && !needs_type_propagation && !has_custom_output) continue;
-            if (nt->inputs == 0 && !needs_type_propagation && !has_custom_output) continue;
-            } // end !nt->is_declaration
         }
 
         // Skip expression parsing for nodes whose args aren't expressions

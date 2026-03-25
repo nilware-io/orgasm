@@ -92,7 +92,7 @@ static const PortDesc P_ERASE_IN[]   = {{"target", "collection to erase from", P
 static const PortDesc P_COND_IN[]    = {{"condition", "boolean condition", PortKind::Data, "bool"}};
 static const PortDesc P_COND_BANG[]  = {{"next", "fires after true/false completes", PortKind::Data, "bang"}, {"true", "fires when condition is true", PortKind::Data, "bang"}, {"false", "fires when condition is false", PortKind::Data, "bang"}};
 static const PortDesc P_SELECT_IN[]  = {{"condition", "boolean selector", PortKind::Data, "bool"}, {"if_true", "value when true", PortKind::Data, "value"}, {"if_false", "value when false", PortKind::Data, "value"}};
-static const PortDesc P_DECL_VAR_IN[]  = {{"name", "variable name (symbol)"}, {"type", "variable type"}, {"init", "initial value (optional)", PortKind::Data, "value"}};
+static const PortDesc P_DECL_VAR_IN[]  = {{"name", "variable name (symbol)"}, {"type", "variable type"}};
 static const PortDesc P_DECL_VAR_OUT[] = {{"ref", "reference to variable", PortKind::Data, "value"}};
 static const PortDesc P_DECL_TYPE_IN[] = {{"name", "type name (symbol)"}, {"type", "type definition"}};
 static const PortDesc P_DECL_TYPE_OUT[]= {{"type", "the declared type", PortKind::Data, "value"}};
@@ -113,7 +113,7 @@ static const NodeType NODE_TYPES[] = {
     {NodeTypeID::DiscardBang,   "discard!",   "Discard value, pass bang",             1,1, 1,0, false,true, false,false, P_BANG_IN, P_VALUE, P_BANG_TRIG, nullptr},
     {NodeTypeID::Discard,       "discard",    "Discard input values",               0,1, 0,0, false,false,true, false, nullptr, P_VALUE, nullptr, nullptr},
     {NodeTypeID::DeclType,      "decl_type",  "Declare a type",                      1,2, 1,1, false,true, false,true,  P_BANG_IN, P_DECL_TYPE_IN, P_BANG_TRIG, P_DECL_TYPE_OUT},
-    {NodeTypeID::DeclVar,       "decl_var",   "Declare a variable",                  1,3, 1,1, false,true, false,true,  P_BANG_IN, P_DECL_VAR_IN, P_BANG_TRIG, P_DECL_VAR_OUT},
+    {NodeTypeID::DeclVar,       "decl_var",   "Declare a variable",                  1,2, 1,1, false,true, false,true,  P_BANG_IN, P_DECL_VAR_IN, P_BANG_TRIG, P_DECL_VAR_OUT},
     {NodeTypeID::Decl,          "decl",       "Compile-time entry point",            0,0, 1,0, false,true, false,true,  nullptr, nullptr, P_BANG_TRIG, nullptr},
     {NodeTypeID::DeclEvent,     "decl_event", "Declare event: name fn_type",         1,2, 1,0, false,true, false,true,  P_BANG_IN, P_DECL_SYM_TYPE_IN, P_BANG_TRIG, nullptr},
     {NodeTypeID::DeclImport,    "decl_import","Import module: \"std/module\"",          1,1, 1,0, false,true, false,true,  P_BANG_IN, P_DECL_IMPORT_IN, P_BANG_TRIG, nullptr},

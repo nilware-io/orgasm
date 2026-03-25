@@ -245,9 +245,8 @@ void FlowNode::parse_args() {
     // Note: $N:name annotations are NOT applied to pin.name (which is used for pin IDs).
     // The display name comes from the parsed expression and is resolved at display time.
 
-    // Compute inline metadata for non-expr, non-type-arg, non-declaration nodes
-    bool is_decl = nt && nt->is_declaration;
-    if (!is_expr && !args_are_type && !is_decl) {
+    // Compute inline metadata for non-expr, non-type-arg nodes
+    if (!is_expr && !args_are_type) {
         int di = nt ? nt->inputs : 0;
         auto info = compute_inline_args(args, di);
         inline_meta.num_inline_args = info.num_inline_args;

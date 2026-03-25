@@ -30,8 +30,6 @@ struct GraphInference {
     // --- Individual phases (public for testing) ---
 
     void clear_all(FlowGraph& graph);
-    void build_registry(FlowGraph& graph);
-    void build_context(FlowGraph& graph);
     void resolve_pin_type_names(FlowGraph& graph);
     bool propagate_connections(FlowGraph& graph);
     bool infer_expr_nodes(FlowGraph& graph);
