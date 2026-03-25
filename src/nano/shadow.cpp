@@ -75,16 +75,7 @@ void generate_shadow_nodes(FlowGraph& graph) {
         auto info = compute_inline_args(node.args, di);
         if (info.num_inline_args == 0) continue;
 
-        // Determine which inline arg positions are lvalue targets (cannot be shadowed)
-        // These stay as inline args on the parent node
-        int first_shadow_arg = 0;
-        if (is_any_of(node.type_id, NodeTypeID::Store, NodeTypeID::StoreBang,
-                       NodeTypeID::ResizeBang, NodeTypeID::Append, NodeTypeID::AppendBang,
-                       NodeTypeID::Erase, NodeTypeID::EraseBang,
-                       NodeTypeID::Lock, NodeTypeID::LockBang,
-                       NodeTypeID::Iterate, NodeTypeID::IterateBang)) {
-            first_shadow_arg = 1; // first arg is lvalue/reference target, skip it
-        }
+        int first_shadow_arg = first_shadow_arg_for(node.type_id);
 
         if (info.num_inline_args <= first_shadow_arg) continue;
 
@@ -297,4 +288,152 @@ void remove_shadow_nodes(FlowGraph& graph) {
     });
 
     std::erase_if(graph.nodes, [](auto& n) { return n.shadow; });
+}
+
+int first_shadow_arg_for(NodeTypeID id) {
+    if (is_any_of(id, NodeTypeID::Store, NodeTypeID::StoreBang,
+                   NodeTypeID::ResizeBang, NodeTypeID::Append, NodeTypeID::AppendBang,
+                   NodeTypeID::Erase, NodeTypeID::EraseBang,
+                   NodeTypeID::Lock, NodeTypeID::LockBang,
+                   NodeTypeID::Iterate, NodeTypeID::IterateBang)) {
+        return 1; // first arg is lvalue/reference target
+    }
+    return 0;
+}
+
+void rebuild_all_inline_display(FlowGraph& graph) {
+    // Build a map: parent guid → ordered shadow args by descriptor pin index
+    // Shadow nodes connect via shadow.out0 → parent.{descriptor_pin_name}
+    struct ShadowInfo { int arg_index; std::string expr; };
+    std::map<std::string, std::vector<ShadowInfo>> shadow_map; // parent_guid → shadow infos
+
+    for (auto& node : graph.nodes) {
+        if (!node.shadow) continue;
+        // Find the link from this shadow's out0 to a parent pin
+        std::string out0_id = node.guid + ".out0";
+        for (auto& link : graph.links) {
+            if (link.from_pin != out0_id) continue;
+            // link.to_pin is "parent_guid.pin_name"
+            auto dot = link.to_pin.find('.');
+            if (dot == std::string::npos) continue;
+            std::string parent_guid = link.to_pin.substr(0, dot);
+            std::string pin_name = link.to_pin.substr(dot + 1);
+
+            // Find parent node to determine arg index from descriptor pin name
+            for (auto& parent : graph.nodes) {
+                if (parent.guid != parent_guid) continue;
+                auto* nt = find_node_type(parent.type_id);
+                if (!nt) break;
+                int arg_index = -1;
+                if (nt->input_ports) {
+                    for (int i = 0; i < nt->inputs; i++) {
+                        if (nt->input_ports[i].name == pin_name) { arg_index = i; break; }
+                    }
+                }
+                if (arg_index < 0) {
+                    // Try parsing "argN" pattern
+                    if (pin_name.substr(0, 3) == "arg") {
+                        arg_index = std::stoi(pin_name.substr(3));
+                    }
+                }
+                if (arg_index >= 0) {
+                    shadow_map[parent_guid].push_back({arg_index, node.args});
+                }
+                break;
+            }
+            break; // shadow has exactly one output link
+        }
+    }
+
+    // Sort each parent's shadows by arg index
+    for (auto& [guid, infos] : shadow_map) {
+        std::sort(infos.begin(), infos.end(), [](auto& a, auto& b) { return a.arg_index < b.arg_index; });
+    }
+
+    // Rebuild inline_display for all non-shadow nodes
+    for (auto& node : graph.nodes) {
+        if (node.shadow) continue;
+        std::string s = node_type_str(node.type_id);
+
+        auto it = shadow_map.find(node.guid);
+        if (it != shadow_map.end()) {
+            // Has shadow children — reconstruct inline args
+            int fsa = first_shadow_arg_for(node.type_id);
+            // Lvalue tokens from node.args (positions 0..fsa-1)
+            std::vector<std::string> lvalue_tokens;
+            if (fsa > 0 && !node.args.empty()) {
+                lvalue_tokens = tokenize_args(node.args, false);
+            }
+            // Merge lvalue + shadow tokens in order
+            int max_idx = 0;
+            for (auto& si : it->second) max_idx = std::max(max_idx, si.arg_index);
+            for (auto& t : lvalue_tokens) max_idx = std::max(max_idx, fsa - 1);
+
+            std::vector<std::string> tokens(max_idx + 1);
+            for (int i = 0; i < fsa && i < (int)lvalue_tokens.size(); i++)
+                tokens[i] = lvalue_tokens[i];
+            for (auto& si : it->second)
+                tokens[si.arg_index] = si.expr;
+
+            for (auto& t : tokens) {
+                s += " " + t;
+            }
+        } else if (!node.args.empty()) {
+            s += " " + node.args;
+        }
+        node.inline_display = s;
+    }
+}
+
+void update_shadows_for_node(FlowGraph& graph, FlowNode& node, const std::string& new_args) {
+    // 1. Remove existing shadow nodes for this parent
+    std::string parent_guid = node.guid;
+    std::set<std::string> shadow_guids;
+    for (auto& n : graph.nodes) {
+        if (!n.shadow) continue;
+        // Check if this shadow connects to our parent
+        std::string out0 = n.guid + ".out0";
+        for (auto& link : graph.links) {
+            if (link.from_pin != out0) continue;
+            auto dot = link.to_pin.find('.');
+            if (dot != std::string::npos && link.to_pin.substr(0, dot) == parent_guid) {
+                shadow_guids.insert(n.guid);
+            }
+        }
+    }
+
+    // Remove shadow links and nodes
+    std::erase_if(graph.links, [&](auto& l) {
+        auto d1 = l.from_pin.find('.');
+        auto d2 = l.to_pin.find('.');
+        if (d1 != std::string::npos && shadow_guids.count(l.from_pin.substr(0, d1))) return true;
+        if (d2 != std::string::npos && shadow_guids.count(l.to_pin.substr(0, d2))) return true;
+        return false;
+    });
+    std::erase_if(graph.nodes, [&](auto& n) { return shadow_guids.count(n.guid) > 0; });
+
+    // 2. Remove descriptor pins that were added by previous shadow generation
+    if (!shadow_guids.empty()) {
+        auto* nt = find_node_type(node.type_id);
+        if (nt) {
+            int fsa = first_shadow_arg_for(node.type_id);
+            std::set<std::string> shadow_pin_names;
+            for (int i = fsa; i < nt->inputs; i++) {
+                if (nt->input_ports) shadow_pin_names.insert(nt->input_ports[i].name);
+            }
+            std::erase_if(node.inputs, [&](auto& p) {
+                return shadow_pin_names.count(p->name) > 0;
+            });
+        }
+    }
+
+    // 3. Set new args and regenerate
+    node.args = new_args;
+    node.parse_args();
+
+    // 4. Run shadow generation (will only process this node since others have empty args)
+    generate_shadow_nodes(graph);
+
+    // 5. Rebuild inline_display for all nodes
+    rebuild_all_inline_display(graph);
 }

@@ -26,6 +26,8 @@ bool load_nano(const std::string& path, FlowGraph& graph) {
     std::string cur_guid, cur_type;
     std::vector<std::string> cur_args;
     float cur_x = 0, cur_y = 0;
+    bool cur_shadow = false;
+    int format_version = 0;
 
     auto trim = [](std::string s) {
         while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.erase(s.begin());
@@ -194,11 +196,12 @@ bool load_nano(const std::string& path, FlowGraph& graph) {
 
         node.rebuild_pin_ids();
 
+        node.shadow = cur_shadow;
         node.parse_args();
         graph.nodes.push_back(std::move(node));
 
         cur_guid.clear(); cur_type.clear(); cur_args.clear();
-        cur_x = 0; cur_y = 0;
+        cur_x = 0; cur_y = 0; cur_shadow = false;
     };
 
     bool in_viewport = false;
@@ -222,7 +225,15 @@ bool load_nano(const std::string& path, FlowGraph& graph) {
             continue;
         }
 
-        if (line.find("version:") == 0 || line.find("version =") == 0) continue;
+        if (line.find("version:") == 0 || line.find("version =") == 0) {
+            auto eq = line.find('=');
+            if (eq != std::string::npos) {
+                std::string val = trim(line.substr(eq + 1));
+                val = unquote(val);
+                if (val == "nanoprog@1") format_version = 1;
+            }
+            continue;
+        }
 
         if (in_viewport) {
             auto eq = line.find('=');
@@ -246,6 +257,7 @@ bool load_nano(const std::string& path, FlowGraph& graph) {
         if (key == "guid" || key == "name") { cur_guid = unquote(val); }
         else if (key == "type") { cur_type = unquote(val); }
         else if (key == "args") { cur_args = parse_array(val); }
+        else if (key == "shadow") { cur_shadow = (unquote(val) == "true"); }
         else if (key == "connections") {
             auto conns = parse_array(val);
             for (auto& c : conns) pending.push_back({c});
@@ -346,14 +358,17 @@ bool load_nano(const std::string& path, FlowGraph& graph) {
         graph.add_link(from_id, to_id);
     }
 
-    generate_shadow_nodes(graph);
+    if (format_version == 0)
+        generate_shadow_nodes(graph);
+
+    rebuild_all_inline_display(graph);
 
     printf("Loaded %zu nodes, %zu links from %s\n", own_node_count, graph.links.size(), path.c_str());
     return true;
 }
 
 void save_nano_stream(std::ostream& f, const FlowGraph& graph) {
-    f << "version = \"nanoprog@0\"\n\n";
+    f << "version = \"nanoprog@1\"\n\n";
 
     f << "[viewport]\n";
     f << "x = " << graph.viewport_x << "\n";
@@ -365,6 +380,7 @@ void save_nano_stream(std::ostream& f, const FlowGraph& graph) {
         f << "[[node]]\n";
         f << "guid = \"" << node.guid << "\"\n";
         f << "type = \"" << node_type_str(node.type_id) << "\"\n";
+        if (node.shadow) f << "shadow = true\n";
 
         auto tokens = tokenize_args(node.args, false);
         if (!tokens.empty()) {
@@ -447,6 +463,8 @@ bool load_nano_string(const std::string& data, FlowGraph& graph) {
     std::string cur_guid, cur_type;
     std::vector<std::string> cur_args;
     float cur_x = 0, cur_y = 0;
+    bool cur_shadow = false;
+    int format_version = 0;
 
     auto trim = [](std::string s) {
         while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.erase(s.begin());
@@ -564,9 +582,10 @@ bool load_nano_string(const std::string& data, FlowGraph& graph) {
         for (int i = 0; i < no; i++) node.outputs.push_back(make_pin("","out"+std::to_string(i), "", nullptr, FlowPin::Output));
         node.rebuild_pin_ids();
 
+        node.shadow = cur_shadow;
         node.parse_args();
         graph.nodes.push_back(std::move(node));
-        cur_guid.clear(); cur_type.clear(); cur_args.clear(); cur_x=0; cur_y=0;
+        cur_guid.clear(); cur_type.clear(); cur_args.clear(); cur_x=0; cur_y=0; cur_shadow=false;
     };
 
     bool in_viewport = false;
@@ -576,7 +595,15 @@ bool load_nano_string(const std::string& data, FlowGraph& graph) {
         if (line.empty() || line[0] == '#') continue;
         if (line == "[[node]]") { flush_node(); in_node = true; in_viewport = false; continue; }
         if (line == "[viewport]") { flush_node(); in_node = false; in_viewport = true; continue; }
-        if (line.find("version") == 0) continue;
+        if (line.find("version:") == 0 || line.find("version =") == 0) {
+            auto eq = line.find('=');
+            if (eq != std::string::npos) {
+                std::string val = trim(line.substr(eq + 1));
+                val = unquote(val);
+                if (val == "nanoprog@1") format_version = 1;
+            }
+            continue;
+        }
         if (in_viewport) {
             auto eq = line.find('=');
             if (eq == std::string::npos) continue;
@@ -594,6 +621,7 @@ bool load_nano_string(const std::string& data, FlowGraph& graph) {
         if (key == "guid" || key == "name") cur_guid = unquote(val);
         else if (key == "type") cur_type = unquote(val);
         else if (key == "args") cur_args = parse_array(val);
+        else if (key == "shadow") cur_shadow = (unquote(val) == "true");
         else if (key == "connections") { for (auto& c : parse_array(val)) pending.push_back({c}); }
         else if (key == "position") { auto co = parse_array(val); if (co.size()>=2) { cur_x=std::stof(co[0]); cur_y=std::stof(co[1]); } }
     }
@@ -604,6 +632,8 @@ bool load_nano_string(const std::string& data, FlowGraph& graph) {
         if (arrow == std::string::npos) continue;
         graph.add_link(pc.target.substr(0,arrow), pc.target.substr(arrow+2));
     }
-    generate_shadow_nodes(graph);
+    if (format_version == 0)
+        generate_shadow_nodes(graph);
+    rebuild_all_inline_display(graph);
     return true;
 }

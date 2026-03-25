@@ -130,6 +130,9 @@ private:
     bool creating_new_node_ = false;
     ImVec2 new_node_pos_;
 
+    // Shadow pin filtering (rebuilt each frame before drawing)
+    std::set<std::string> shadow_connected_pins_; // pin IDs connected from shadow nodes
+
     // Drawing helpers
     ImVec2 canvas_to_screen(ImVec2 p, ImVec2 canvas_origin) const;
     ImVec2 screen_to_canvas(ImVec2 p, ImVec2 canvas_origin) const;

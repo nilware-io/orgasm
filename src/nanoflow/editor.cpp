@@ -3,6 +3,7 @@
 #include "nano/expr.h"
 #include "nano/inference.h"
 #include "nano/serial.h"
+#include "nano/shadow.h"
 #include "nano/types.h"
 #include <cmath>
 #include <algorithm>
@@ -393,9 +394,13 @@ ImVec2 FlowEditorWindow::get_pin_pos(const FlowNode& node, const FlowPin& pin, I
 
     if (pin.direction == FlowPin::Input || pin.direction == FlowPin::Lambda) {
         // Data inputs and lambdas after bang inputs on the top row.
+        // Skip shadow-connected pins in slot calculation.
         int bang_offset = (int)node.triggers.size();
         int slot = 0;
-        for (auto& p : node.inputs) { if (p->id == pin.id) break; slot++; }
+        for (auto& p : node.inputs) {
+            if (p->id == pin.id) break;
+            if (!shadow_connected_pins_.count(p->id)) slot++;
+        }
         float x = node.position.x + PIN_SPACING * (bang_offset + slot + 0.5f);
         float y = node.position.y;
         return canvas_to_screen({x, y}, origin);
@@ -422,6 +427,7 @@ ImVec2 FlowEditorWindow::get_pin_pos(const FlowNode& node, const FlowPin& pin, I
 FlowEditorWindow::PinHit FlowEditorWindow::hit_test_pin(ImVec2 sp, ImVec2 co, float radius) const {
     float r2 = radius * radius * active().canvas_zoom * active().canvas_zoom;
     for (auto& node : active().graph.nodes) {
+        if (node.imported || node.shadow) continue;
         for (auto& pin : node.triggers)
             if (dist2(sp, get_pin_pos(node, *pin, co)) < r2)
                 return {node.id, pin->id, FlowPin::BangTrigger};
@@ -486,7 +492,10 @@ void FlowEditorWindow::draw_node(ImDrawList* dl, FlowNode& node, ImVec2 origin) 
     bool is_label = (node.type_id == NodeTypeID::Label);
 
     // Width from pins (top row = inputs + lambdas, bottom row = outputs)
-    int top_pins = (int)(node.triggers.size() + node.inputs.size());
+    int visible_inputs = 0;
+    for (auto& pin : node.inputs)
+        if (!shadow_connected_pins_.count(pin->id)) visible_inputs++;
+    int top_pins = (int)node.triggers.size() + visible_inputs;
     int bottom_pins = (int)(node.nexts.size() + node.outputs.size());
     int max_pins = std::max(top_pins, bottom_pins);
     float pin_w = (float)(max_pins + 1) * PIN_SPACING;
@@ -568,6 +577,7 @@ void FlowEditorWindow::draw_node(ImDrawList* dl, FlowNode& node, ImVec2 origin) 
             draw_pin(dl, pp, pr, IM_COL32(255, 200, 80, 255), PinShape::Square, active().canvas_zoom);
         }
         for (auto& pin : node.inputs) {
+            if (shadow_connected_pins_.count(pin->id)) continue;
             ImVec2 pp = get_pin_pos(node, *pin, origin);
             if (pin->direction == FlowPin::Lambda)
                 draw_pin(dl, pp, pr, IM_COL32(180, 130, 255, 255), PinShape::LambdaDown, active().canvas_zoom);
@@ -840,7 +850,7 @@ void FlowEditorWindow::draw() {
     auto hit_test_node = [&](ImVec2 mc) -> int {
         for (int i = (int)active().graph.nodes.size() - 1; i >= 0; i--) {
             auto& node = active().graph.nodes[i];
-            if (node.imported) continue;
+            if (node.imported || node.shadow) continue;
             if (mc.x >= node.position.x && mc.x <= node.position.x + node.size.x &&
                 mc.y >= node.position.y && mc.y <= node.position.y + node.size.y)
                 return node.id;
@@ -929,6 +939,7 @@ void FlowEditorWindow::draw() {
                 ImVec2 cb = screen_to_canvas(br_box, canvas_origin);
                 active().selected_nodes.clear();
                 for (auto& node : active().graph.nodes) {
+                    if (node.imported || node.shadow) continue;
                     if (node.position.x + node.size.x >= ca.x && node.position.x <= cb.x &&
                         node.position.y + node.size.y >= ca.y && node.position.y <= cb.y)
                         active().selected_nodes.insert(node.id);
@@ -1220,8 +1231,28 @@ void FlowEditorWindow::draw() {
         } // !was_drag
     }
 
-    // --- Draw links ---
-    for (auto& link : active().graph.links) draw_link(dl, link, canvas_origin);
+    // --- Build shadow filter sets for drawing ---
+    std::set<std::string> shadow_guids;
+    shadow_connected_pins_.clear();
+    for (auto& node : active().graph.nodes)
+        if (node.shadow) shadow_guids.insert(node.guid);
+    for (auto& link : active().graph.links) {
+        auto d1 = link.from_pin.find('.');
+        if (d1 != std::string::npos && shadow_guids.count(link.from_pin.substr(0, d1)))
+            shadow_connected_pins_.insert(link.to_pin);
+        auto d2 = link.to_pin.find('.');
+        if (d2 != std::string::npos && shadow_guids.count(link.to_pin.substr(0, d2)))
+            shadow_connected_pins_.insert(link.from_pin);
+    }
+
+    // --- Draw links (skip links involving shadow nodes) ---
+    for (auto& link : active().graph.links) {
+        auto d1 = link.from_pin.find('.');
+        auto d2 = link.to_pin.find('.');
+        if (d1 != std::string::npos && shadow_guids.count(link.from_pin.substr(0, d1))) continue;
+        if (d2 != std::string::npos && shadow_guids.count(link.to_pin.substr(0, d2))) continue;
+        draw_link(dl, link, canvas_origin);
+    }
 
     // --- Draw link being dragged ---
     if (!dragging_link_from_pin_.empty() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
@@ -1279,7 +1310,7 @@ void FlowEditorWindow::draw() {
     // --- Draw nodes ---
     auto hovered_pin = hit_test_pin(mouse_pos, canvas_origin);
     for (auto& node : active().graph.nodes) {
-        if (node.imported) continue;
+        if (node.imported || node.shadow) continue;
         draw_node(dl, node, canvas_origin);
     }
 
@@ -1728,6 +1759,9 @@ void FlowEditorWindow::draw() {
                     node.bang_pin.id = new_id;
                 }
 
+                // Generate shadow nodes for inline args and rebuild display text
+                update_shadows_for_node(active().graph, node, rest_args);
+
                 editing_node_ = -1;
                 mark_dirty();
             } while (false);
@@ -1841,7 +1875,7 @@ void FlowEditorWindow::draw() {
     for (auto& node : active().graph.nodes) {
         auto* nt_decl = find_node_type(node.type_id);
         if (!nt_decl || !nt_decl->is_declaration) continue;
-        if (node.imported) continue;
+        if (node.imported || node.shadow) continue;
         bool has_err = !node.error.empty();
         if (has_err) ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 100, 100, 255));
         if (ImGui::Selectable(node.display_text().c_str())) {
@@ -2241,6 +2275,7 @@ void FlowEditorWindow::draw_toolbar() {
         std::string query(search_buf_);
         if (!query.empty()) {
             for (auto& node : active().graph.nodes) {
+                if (node.imported || node.shadow) continue;
                 if (node.guid.find(query) != std::string::npos ||
                     node.display_text().find(query) != std::string::npos) {
                     center_on_node(node, {last_canvas_w_, last_canvas_h_});

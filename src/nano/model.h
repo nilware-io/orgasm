@@ -64,7 +64,8 @@ struct FlowNode {
     FlowPin bang_pin = {"", "bang", "bang", nullptr, FlowPin::BangNext};
     std::string error;            // non-empty if node has a validation error
     bool imported = false;        // true if this node was loaded from a nanostd import
-    bool shadow = false;          // true if this is an internal shadow expr node (not serialized/rendered)
+    bool shadow = false;          // true if this is an internal shadow expr node
+    std::string inline_display;   // cached display text (always populated by rebuild_all_inline_display)
 
     // Parsed expressions — populated at load time, never re-parsed from strings
     std::vector<ExprPtr> parsed_exprs;
@@ -108,16 +109,14 @@ struct FlowNode {
         type_dirty = true;
     }
 
-    // Display text for rendering inside the node: "type args"
+    // Display text for rendering inside the node
     std::string display_text() const {
-        std::string s = node_type_str(type_id);
-        if (!args.empty()) s += " " + args;
-        return s;
+        return inline_display;
     }
 
     // Edit text for the inline editor (same as display)
     std::string edit_text() const {
-        return display_text();
+        return inline_display;
     }
 };
 

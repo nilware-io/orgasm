@@ -1,4 +1,9 @@
-version = "nanoprog@0"
+version = "nanoprog@1"
+
+[viewport]
+x = -1018.19
+y = -756.948
+zoom = 0.90909
 
 [[node]]
 guid = "934e3b98bb914e95"
@@ -51,7 +56,7 @@ position = [754.71, 742.669]
 [[node]]
 guid = "831e483b4e4602dc"
 type = "append"
-args = ["$oscs", "$0"]
+args = ["$oscs"]
 position = [1762.05, 2099.45]
 connections = ["831e483b4e4602dc.out0->182cde3e88fc2aec.value"]
 
@@ -60,7 +65,7 @@ guid = "df6e4aa3d0d8d2bc"
 type = "new"
 args = ["osc_def"]
 position = [1746.02, 2025.51]
-connections = ["df6e4aa3d0d8d2bc.out0->831e483b4e4602dc.0"]
+connections = ["df6e4aa3d0d8d2bc.out0->831e483b4e4602dc_s1.0"]
 
 [[node]]
 guid = "c81c38e5f70d7c98"
@@ -100,14 +105,14 @@ connections = ["9786d74433799f1e.out0->df6e4aa3d0d8d2bc.4", "9786d74433799f1e.ou
 [[node]]
 guid = "f35abbba8775f1de"
 type = "store!"
-args = ["$0.p", "$0.p+$0.pstep"]
+args = ["$0.p"]
 position = [2133.84, 1421.55]
 connections = ["f35abbba8775f1de.bang0->3e4a660fc6f1a8d2.bang_in0"]
 
 [[node]]
 guid = "3e4a660fc6f1a8d2"
 type = "store!"
-args = ["$0.a", "$0.a*$0.astep"]
+args = ["$0.a"]
 position = [2140.43, 1513.56]
 
 [[node]]
@@ -115,7 +120,7 @@ guid = "2018c2b6134a0c05"
 type = "expr"
 args = ["$0", "$0.a"]
 position = [1872.74, 1347.96]
-connections = ["2018c2b6134a0c05.out0->c81c38e5f70d7c98.$0", "2018c2b6134a0c05.out0->f35abbba8775f1de.$0", "2018c2b6134a0c05.out0->3e4a660fc6f1a8d2.$0", "2018c2b6134a0c05.out0->c81c38e5f70d7c98.0", "2018c2b6134a0c05.out1->c81c38e5f70d7c98.$1", "2018c2b6134a0c05.out1->18cbc672fb22e68e.0", "2018c2b6134a0c05.out1->c81c38e5f70d7c98.1", "2018c2b6134a0c05.out0->f35abbba8775f1de.0", "2018c2b6134a0c05.out0->3e4a660fc6f1a8d2.0"]
+connections = ["2018c2b6134a0c05.out0->c81c38e5f70d7c98.$0", "2018c2b6134a0c05.out0->f35abbba8775f1de.$0", "2018c2b6134a0c05.out0->3e4a660fc6f1a8d2.$0", "2018c2b6134a0c05.out0->c81c38e5f70d7c98.0", "2018c2b6134a0c05.out1->c81c38e5f70d7c98.$1", "2018c2b6134a0c05.out1->18cbc672fb22e68e.0", "2018c2b6134a0c05.out1->c81c38e5f70d7c98.1", "2018c2b6134a0c05.out0->f35abbba8775f1de.0", "2018c2b6134a0c05.out0->3e4a660fc6f1a8d2.0", "2018c2b6134a0c05.out0->f35abbba8775f1de_s1.0", "2018c2b6134a0c05.out0->3e4a660fc6f1a8d2_s1.0"]
 
 [[node]]
 guid = "b64eb56b2a60eda2"
@@ -143,7 +148,7 @@ guid = "5551d3ed2caa466f"
 type = "expr"
 args = ["$0.gen($0)"]
 position = [3767.6, 1676.35]
-connections = ["5551d3ed2caa466f.out0->a81d5e94c0631e58.0", "5551d3ed2caa466f.post_bang->1a6c0c7662614047.bang_in0", "5551d3ed2caa466f.out0->1a6c0c7662614047.1"]
+connections = ["5551d3ed2caa466f.out0->a81d5e94c0631e58.0", "5551d3ed2caa466f.post_bang->1a6c0c7662614047.bang_in0", "5551d3ed2caa466f.out0->1a6c0c7662614047_s1.1"]
 
 [[node]]
 guid = "a81d5e94c0631e58"
@@ -155,19 +160,19 @@ connections = ["a81d5e94c0631e58.as_lambda->e6a647578747ca01.fn"]
 [[node]]
 guid = "1a6c0c7662614047"
 type = "store!"
-args = ["$0", "$0+$1.s"]
+args = ["$0"]
 position = [3962.49, 1744.95]
 
 [[node]]
 guid = "8a90b92d139d3284"
 type = "dup"
 position = [3811.81, 1541.74]
-connections = ["8a90b92d139d3284.out0->5551d3ed2caa466f.0", "8a90b92d139d3284.out0->59970d1e2f56ca0f.0", "8a90b92d139d3284.out0->b78d3f85fe8f654a.value"]
+connections = ["8a90b92d139d3284.out0->5551d3ed2caa466f.0", "8a90b92d139d3284.out0->b78d3f85fe8f654a.value", "8a90b92d139d3284.out0->59970d1e2f56ca0f_s1.0"]
 
 [[node]]
 guid = "59970d1e2f56ca0f"
 type = "erase"
-args = ["$oscs", "$0"]
+args = ["$oscs"]
 position = [3839.65, 1835.09]
 connections = ["59970d1e2f56ca0f.out0->a81d5e94c0631e58.2"]
 
@@ -200,7 +205,7 @@ guid = "e74cec1135c3a130"
 type = "decl_local"
 args = ["mixs", "f32"]
 position = [3702.59, 1442.63]
-connections = ["e74cec1135c3a130.out0->1a6c0c7662614047.0", "e74cec1135c3a130.bang0->a8da10815e6d03ff.bang_in0", "e74cec1135c3a130.out0->436d853ee8e34fa5.0"]
+connections = ["e74cec1135c3a130.out0->1a6c0c7662614047.0", "e74cec1135c3a130.bang0->a8da10815e6d03ff.bang_in0", "e74cec1135c3a130.out0->436d853ee8e34fa5.0", "e74cec1135c3a130.out0->1a6c0c7662614047_s1.0"]
 
 [[node]]
 guid = "809ab9a7f7fa1b7e"
@@ -268,7 +273,7 @@ connections = ["ddaf4497489a54c2.bang0->45df349a6ae05f56.bang_in0"]
 [[node]]
 guid = "45df349a6ae05f56"
 type = "store!"
-args = ["$delay_line_size", "2048*16"]
+args = ["$delay_line_size"]
 position = [785.327, 1265.73]
 connections = ["45df349a6ae05f56.bang0->f79f6fb421f321f0.bang_in0"]
 
@@ -518,4 +523,52 @@ guid = "56eb5d29abcb9fb0"
 type = "void"
 position = [4965.91, 2377.32]
 connections = ["56eb5d29abcb9fb0.as_lambda->dcdb8bb52c9d14ef.value"]
+
+[[node]]
+guid = "831e483b4e4602dc_s1"
+type = "expr"
+shadow = true
+args = ["$0"]
+position = [1562.05, 2039.45]
+connections = ["831e483b4e4602dc_s1.out0->831e483b4e4602dc.value"]
+
+[[node]]
+guid = "f35abbba8775f1de_s1"
+type = "expr"
+shadow = true
+args = ["$0.p+$0.pstep"]
+position = [1933.84, 1361.55]
+connections = ["f35abbba8775f1de_s1.out0->f35abbba8775f1de.value"]
+
+[[node]]
+guid = "3e4a660fc6f1a8d2_s1"
+type = "expr"
+shadow = true
+args = ["$0.a*$0.astep"]
+position = [1940.43, 1453.56]
+connections = ["3e4a660fc6f1a8d2_s1.out0->3e4a660fc6f1a8d2.value"]
+
+[[node]]
+guid = "1a6c0c7662614047_s1"
+type = "expr"
+shadow = true
+args = ["$0+$1.s"]
+position = [3762.49, 1684.95]
+connections = ["1a6c0c7662614047_s1.out0->1a6c0c7662614047.value"]
+
+[[node]]
+guid = "59970d1e2f56ca0f_s1"
+type = "expr"
+shadow = true
+args = ["$0"]
+position = [3639.65, 1775.09]
+connections = ["59970d1e2f56ca0f_s1.out0->59970d1e2f56ca0f.key"]
+
+[[node]]
+guid = "45df349a6ae05f56_s1"
+type = "expr"
+shadow = true
+args = ["2048*16"]
+position = [585.327, 1205.73]
+connections = ["45df349a6ae05f56_s1.out0->45df349a6ae05f56.value"]
 
