@@ -462,6 +462,8 @@ std::string type_to_string(const TypePtr& t) {
     case TypeKind::Mutex: return prefix + "mutex";
     case TypeKind::Scalar: {
         static const char* names[] = {"u8","s8","u16","s16","u32","s32","u64","s64","f32","f64"};
+        if (!t->literal_value.empty())
+            return prefix + "literal<" + names[(int)t->scalar] + ", " + t->literal_value + ">";
         return prefix + names[(int)t->scalar];
     }
     case TypeKind::Named: return prefix + t->named_ref;

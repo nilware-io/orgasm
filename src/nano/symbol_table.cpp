@@ -98,8 +98,14 @@ void SymbolTable::populate_builtins(TypePool& pool) {
     add_builtin("tau", make_generic_float());
 
     // --- Booleans ---
-    add_builtin("true", pool.t_bool);
-    add_builtin("false", pool.t_bool);
+    {
+        auto t_true = std::make_shared<TypeExpr>(*pool.t_bool);
+        t_true->literal_value = "true";
+        add_builtin("true", t_true);
+        auto t_false = std::make_shared<TypeExpr>(*pool.t_bool);
+        t_false->literal_value = "false";
+        add_builtin("false", t_false);
+    }
 
     // --- Scalar type symbols -> type<T> ---
     add_builtin("f32", make_meta_type(pool.t_f32));
