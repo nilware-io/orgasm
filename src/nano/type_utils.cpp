@@ -5,12 +5,70 @@
 #include <sstream>
 #include <map>
 
-std::string get_decl_name(const FlowNode& node) {
+// Helper: find the shadow node connected to a specific input pin of a node
+static const FlowNode* find_shadow_source(const FlowNode& node, const std::string& pin_name, const FlowGraph& graph) {
+    // Find the pin
+    std::string pin_id;
+    for (auto& p : node.inputs) {
+        if (p->name == pin_name) { pin_id = p->id; break; }
+    }
+    if (pin_id.empty()) return nullptr;
+    // Find the link TO this pin
+    for (auto& link : graph.links) {
+        if (link.to_pin == pin_id) {
+            // Find the source node
+            auto dot = link.from_pin.find('.');
+            if (dot == std::string::npos) continue;
+            std::string src_guid = link.from_pin.substr(0, dot);
+            for (auto& n : graph.nodes) {
+                if (n.guid == src_guid) return &n;
+            }
+        }
+    }
+    return nullptr;
+}
+
+// Helper: extract a symbol name from a shadow expr node's parsed expression or args
+static std::string extract_symbol_from_node(const FlowNode* shadow) {
+    if (!shadow) return "";
+    // Check parsed_exprs first
+    if (!shadow->parsed_exprs.empty() && shadow->parsed_exprs[0]) {
+        auto& e = shadow->parsed_exprs[0];
+        if (e->kind == ExprKind::SymbolRef) return e->symbol_name;
+        if (e->kind == ExprKind::Literal && e->literal_kind == LiteralKind::String) return e->string_value;
+    }
+    // Fallback: raw args
+    if (!shadow->args.empty()) return shadow->args;
+    return "";
+}
+
+std::string get_decl_name(const FlowNode& node, const FlowGraph& graph) {
+    // 1. Check parsed_exprs (may survive shadow generation)
     if (!node.parsed_exprs.empty() && node.parsed_exprs[0] &&
         node.parsed_exprs[0]->kind == ExprKind::SymbolRef)
         return node.parsed_exprs[0]->symbol_name;
+    // 2. Check shadow node connected to "name" or "path" pin
+    auto* shadow = find_shadow_source(node, "name", graph);
+    if (!shadow) shadow = find_shadow_source(node, "path", graph);
+    if (shadow) return extract_symbol_from_node(shadow);
+    // 3. Fallback: raw args tokenization
     auto tokens = tokenize_args(node.args, false);
     return tokens.empty() ? "" : tokens[0];
+}
+
+std::string get_decl_type_str(const FlowNode& node, const FlowGraph& graph) {
+    // 1. Check shadow node connected to "type" pin
+    auto* shadow = find_shadow_source(node, "type", graph);
+    if (shadow) return extract_symbol_from_node(shadow);
+    // 2. Fallback: raw args — join tokens[1:]
+    auto tokens = tokenize_args(node.args, false);
+    if (tokens.size() < 2) return "";
+    std::string type_str;
+    for (size_t i = 1; i < tokens.size(); i++) {
+        if (!type_str.empty()) type_str += " ";
+        type_str += tokens[i];
+    }
+    return type_str;
 }
 
 std::vector<TypeField> parse_type_fields(const FlowNode& type_node) {
@@ -31,7 +89,7 @@ std::vector<TypeField> parse_type_fields(const FlowNode& type_node) {
 const FlowNode* find_type_node(const FlowGraph& graph, const std::string& type_name) {
     for (auto& n : graph.nodes) {
         if (n.type_id != NodeTypeID::DeclType) continue;
-        if (get_decl_name(n) == type_name) return &n;
+        if (get_decl_name(n, graph) == type_name) return &n;
     }
     return nullptr;
 }
@@ -41,7 +99,7 @@ const FlowNode* find_event_node(const FlowGraph& graph, const std::string& event
     if (!name.empty() && name[0] == '~') name = name.substr(1);
     for (auto& n : graph.nodes) {
         if (n.type_id != NodeTypeID::DeclEvent) continue;
-        if (get_decl_name(n) == name) return &n;
+        if (get_decl_name(n, graph) == name) return &n;
     }
     return nullptr;
 }

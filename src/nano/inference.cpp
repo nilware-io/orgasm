@@ -230,21 +230,22 @@ void GraphInference::build_registry(FlowGraph& graph) {
     registry.clear();
     for (auto& node : graph.nodes) {
         if (node.type_id != NodeTypeID::DeclType) continue;
-        std::string name = get_decl_name(node);
+        std::string name = get_decl_name(node, graph);
         if (name.empty()) continue;
-        auto tokens = tokenize_args(node.args, false);
-        if (tokens.size() < 2) continue;
-        std::string def;
-        for (size_t i = 1; i < tokens.size(); i++) {
-            if (!def.empty()) def += " ";
-            def += tokens[i];
+        std::string def = get_decl_type_str(node, graph);
+        if (def.empty()) continue;
+        // Classify: function type starts with '(', struct has top-level colons
+        auto def_tokens = tokenize_args(def, false);
+        bool is_func = !def_tokens.empty() && !def_tokens[0].empty() && def_tokens[0][0] == '(';
+        bool is_struct = false;
+        if (!is_func) {
+            for (auto& t : def_tokens) {
+                if (has_top_level_colon(t)) { is_struct = true; break; }
+            }
         }
-        // Determine if this is a type alias, function type, or struct with fields
-        int decl_class = classify_decl_type(tokens);
-        if (decl_class == 0 || decl_class == 1) { // alias or function type
+        if (!is_struct) {
             registry.register_type(name, def);
         } else {
-            // Struct with fields — register as placeholder, fields validated separately
             registry.register_type(name, "void");
         }
     }
@@ -267,11 +268,11 @@ void GraphInference::build_context(FlowGraph& graph) {
 
     for (auto& node : graph.nodes) {
         if (node.type_id == NodeTypeID::DeclVar) {
-            std::string name = get_decl_name(node);
+            std::string name = get_decl_name(node, graph);
             if (name.empty()) continue;
-            auto tokens = tokenize_args(node.args, false);
-            if (tokens.size() < 2) continue;
-            auto var_type = pool.intern(join_type_tokens(tokens, 1));
+            std::string type_str = get_decl_type_str(node, graph);
+            if (type_str.empty()) continue;
+            auto var_type = pool.intern(type_str);
             ctx.var_types[name] = var_type;
             if (var_type) {
                 auto ref_type = std::make_shared<TypeExpr>(*var_type);
@@ -283,50 +284,39 @@ void GraphInference::build_context(FlowGraph& graph) {
     // Register FFI functions as global variables with function types
     for (auto& node : graph.nodes) {
         if (node.type_id == NodeTypeID::Ffi) {
-            std::string name = get_decl_name(node);
-            auto tokens = tokenize_args(node.args, false);
-            if (!name.empty() && tokens.size() >= 2) {
-                auto fn_type = pool.intern(join_type_tokens(tokens, 1));
+            std::string name = get_decl_name(node, graph);
+            std::string type_str = get_decl_type_str(node, graph);
+            if (!name.empty() && !type_str.empty()) {
+                auto fn_type = pool.intern(type_str);
                 if (fn_type && fn_type->kind == TypeKind::Function) {
                     ctx.var_types[name] = fn_type;
                     symbol_table.add(name, fn_type);
                 } else {
-                    node.error = "ffi: type must be a function type (got " + join_type_tokens(tokens, 1) + ")";
+                    node.error = "ffi: type must be a function type (got " + type_str + ")";
                 }
             } else {
                 node.error = "ffi: requires <name> <function_type>";
             }
         }
         if (node.type_id == NodeTypeID::DeclImport) {
-            // Extract path from parsed_exprs (string literal) or raw tokens
-            std::string path;
-            if (!node.parsed_exprs.empty() && node.parsed_exprs[0] &&
-                node.parsed_exprs[0]->kind == ExprKind::Literal &&
-                node.parsed_exprs[0]->literal_kind == LiteralKind::String) {
-                path = node.parsed_exprs[0]->string_value;
-            } else {
-                auto tokens = tokenize_args(node.args, false);
-                if (tokens.empty()) {
-                    node.error = "decl_import: requires a path string (e.g. \"std/imgui\")";
-                    continue;
+            // Extract path from shadow/parsed_exprs or wire connection
+            std::string path = get_decl_name(node, graph); // uses "path" pin via shadow lookup
+            // Strip quotes if present (raw token fallback)
+            if (path.size() >= 2 && path.front() == '"' && path.back() == '"')
+                path = path.substr(1, path.size() - 2);
+            if (!path.empty()) {
+                if (path.substr(0, 4) != "std/") {
+                    node.error = "decl_import: only std/ imports are currently supported (got " + path + ")";
                 }
-                path = tokens[0];
-                if (path.size() >= 2 && path.front() == '"' && path.back() == '"')
-                    path = path.substr(1, path.size() - 2);
-            }
-            if (path.empty()) {
-                node.error = "decl_import: requires a path string (e.g. \"std/imgui\")";
-            } else if (path.substr(0, 4) != "std/") {
-                node.error = "decl_import: only std/ imports are currently supported (got " + path + ")";
             }
         }
     }
     for (auto& node : graph.nodes) {
         if (node.type_id != NodeTypeID::DeclType) continue;
-        std::string name = get_decl_name(node);
+        std::string name = get_decl_name(node, graph);
         if (name.empty()) continue;
-        auto tokens = tokenize_args(node.args, false);
-        if (tokens.size() < 2) continue;
+        std::string type_str = get_decl_type_str(node, graph);
+        if (type_str.empty()) continue;
         auto fields = parse_type_fields(node);
         if (!fields.empty()) {
             auto struct_type = std::make_shared<TypeExpr>();
@@ -407,7 +397,7 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
         if (!is_expr) {
             // DeclVar needs output type inference
             if (node.type_id == NodeTypeID::DeclVar) {
-                std::string name = get_decl_name(node);
+                std::string name = get_decl_name(node, graph);
                 if (name.empty()) {
                     if (!node.args.empty() && node.error.empty())
                         node.error = "decl_var requires: name type";

@@ -805,7 +805,8 @@ TypePtr TypeInferenceContext::find_field_type(const TypePtr& obj_type, const std
     // Named type → resolve to struct
     if (obj_type->kind == TypeKind::Named) {
         auto resolved = resolve_named(obj_type->named_ref);
-        if (resolved) return find_field_type(resolved, field_name);
+        if (resolved && resolved.get() != obj_type.get() && resolved->kind != TypeKind::Named)
+            return find_field_type(resolved, field_name);
     }
     // Container iterator fields
     if (obj_type->kind == TypeKind::ContainerIterator) {
