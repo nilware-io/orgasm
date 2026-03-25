@@ -413,7 +413,7 @@ type = "store!"
 args = ["$klavie_down"]
 inputs = ["$step2", "$auto-daa77173e91ec011-as_lambda"]
 outputs = ["$auto-f79f6fb421f321f0-bang0"]
-position = [1186.87, 1217.83]
+position = [1184.17, 1184.67]
 
 [[node]]
 id = "$auto-487ba455bf42a84c"

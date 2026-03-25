@@ -219,45 +219,49 @@ static ImVec2 bezier_sample(ImVec2 p0, ImVec2 p1, ImVec2 p2, ImVec2 p3, float t)
 
 static void draw_dashed_bezier(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImVec2 p2, ImVec2 p3,
                                 ImU32 col, float thickness, float dash_len, float gap_len) {
-    const int samples = 64;
-    // Build polyline with arc-length parameterization
-    ImVec2 pts[samples + 1];
-    float lengths[samples + 1];
-    pts[0] = p0;
-    lengths[0] = 0;
-    for (int i = 1; i <= samples; i++) {
-        pts[i] = bezier_sample(p0, p1, p2, p3, (float)i / samples);
+    const int N = 128;
+    // Pre-sample curve points and cumulative arc lengths
+    ImVec2 pts[N + 1];
+    float arc[N + 1];
+    pts[0] = p0; arc[0] = 0;
+    for (int i = 1; i <= N; i++) {
+        pts[i] = bezier_sample(p0, p1, p2, p3, (float)i / N);
         float dx = pts[i].x - pts[i-1].x, dy = pts[i].y - pts[i-1].y;
-        lengths[i] = lengths[i-1] + sqrtf(dx*dx + dy*dy);
+        arc[i] = arc[i-1] + sqrtf(dx*dx + dy*dy);
     }
-    float total = lengths[samples];
+    float total = arc[N];
+    if (total < 1.0f) return;
     float cycle = dash_len + gap_len;
 
-    // Walk along the curve drawing dash segments
-    int seg = 0;
-    float dist = 0;
-    while (dist < total) {
-        float dash_start = dist;
-        float dash_end = std::min(dist + dash_len, total);
-        // Find segment indices for start and end
-        // Draw line segments between sampled points in the dash range
-        bool in_dash = false;
-        ImVec2 prev = {};
-        for (int i = 0; i <= samples; i++) {
-            if (lengths[i] >= dash_start && lengths[i] <= dash_end) {
-                if (!in_dash) {
-                    // Interpolate exact start point
-                    prev = pts[i];
-                    in_dash = true;
-                } else {
-                    dl->AddLine(prev, pts[i], col, thickness);
-                    prev = pts[i];
-                }
-            } else if (in_dash) {
-                break;
-            }
+    // Interpolate a point at a given arc distance
+    auto lerp_at = [&](float d) -> ImVec2 {
+        if (d <= 0) return pts[0];
+        if (d >= total) return pts[N];
+        // Binary search for segment
+        int lo = 0, hi = N;
+        while (lo < hi - 1) { int mid = (lo+hi)/2; if (arc[mid] < d) lo = mid; else hi = mid; }
+        float seg_len = arc[hi] - arc[lo];
+        float t = (seg_len > 0) ? (d - arc[lo]) / seg_len : 0;
+        return {pts[lo].x + t * (pts[hi].x - pts[lo].x),
+                pts[lo].y + t * (pts[hi].y - pts[lo].y)};
+    };
+
+    // Draw dashes
+    float d = 0;
+    while (d < total) {
+        float d_end = std::min(d + dash_len, total);
+        // Draw the dash as a series of short line segments
+        ImVec2 prev = lerp_at(d);
+        float step = 3.0f; // pixels per sub-segment
+        for (float dd = d + step; dd <= d_end; dd += step) {
+            ImVec2 cur = lerp_at(dd);
+            dl->AddLine(prev, cur, col, thickness);
+            prev = cur;
         }
-        dist += cycle;
+        // Final segment to exact end
+        ImVec2 end = lerp_at(d_end);
+        dl->AddLine(prev, end, col, thickness);
+        d += cycle;
     }
 }
 
@@ -697,28 +701,54 @@ void FlowEditorWindow::draw_link(ImDrawList* dl, const FlowLink& link, ImVec2 or
     bool from_trigger = from_pin_ptr && from_pin_ptr->direction == FlowPin::BangTrigger;
 
     ImU32 col_error = IM_COL32(255, 60, 60, 220);
+    bool named = !link.net_name.empty() && !link.auto_wire;
+
+    // Dim named wires so the label stands out more
+    auto dim = [](ImU32 c) -> ImU32 {
+        return (c & 0x00FFFFFF) | (((c >> 24) * 100 / 255) << 24);
+    };
+    if (named) col_error = dim(col_error);
+
+    auto wire_col = [&](ImU32 c) { return named ? dim(c) : c; };
 
     if (from_trigger) {
-        // Trigger-as-source: exits upward from top, curves to target
         float dy = std::max(std::abs(tp.y - fp.y) * 0.5f, 40.0f * active().canvas_zoom);
-        float dx = std::max(std::abs(tp.x - fp.x) * 0.3f, 20.0f * active().canvas_zoom);
-        dl->AddBezierCubic(fp, {fp.x, fp.y - dy}, {tp.x, tp.y - dy}, tp,
-                           type_error ? col_error : IM_COL32(255, 200, 80, 200), 2.5f * active().canvas_zoom);
+        ImU32 col = type_error ? col_error : wire_col(IM_COL32(255, 200, 80, 200));
+        float th = 2.5f * active().canvas_zoom;
+        if (named)
+            draw_dashed_bezier(dl, fp, {fp.x, fp.y - dy}, {tp.x, tp.y - dy}, tp, col, th, 8.0f * active().canvas_zoom, 4.0f * active().canvas_zoom);
+        else
+            dl->AddBezierCubic(fp, {fp.x, fp.y - dy}, {tp.x, tp.y - dy}, tp, col, th);
     } else if (from_grab) {
         float dx = std::max(std::abs(tp.x - fp.x) * 0.5f, 30.0f * active().canvas_zoom);
         float dy = std::max(std::abs(tp.y - fp.y) * 0.5f, 30.0f * active().canvas_zoom);
-        dl->AddBezierCubic(fp, {fp.x - dx, fp.y}, {tp.x, tp.y - dy}, tp,
-                           type_error ? col_error : IM_COL32(180, 130, 255, 200), 2.5f * active().canvas_zoom);
+        ImU32 col = type_error ? col_error : wire_col(IM_COL32(180, 130, 255, 200));
+        float th = 2.5f * active().canvas_zoom;
+        if (named)
+            draw_dashed_bezier(dl, fp, {fp.x - dx, fp.y}, {tp.x, tp.y - dy}, tp, col, th, 8.0f * active().canvas_zoom, 4.0f * active().canvas_zoom);
+        else
+            dl->AddBezierCubic(fp, {fp.x - dx, fp.y}, {tp.x, tp.y - dy}, tp, col, th);
     } else if (from_bang_pin) {
         float dx = std::max(std::abs(tp.x - fp.x) * 0.5f, 30.0f * active().canvas_zoom);
         float dy = std::max(std::abs(tp.y - fp.y) * 0.5f, 30.0f * active().canvas_zoom);
-        // Side bang exits horizontally right, enters bang input vertically from above
-        dl->AddBezierCubic(fp, {fp.x + dx, fp.y}, {tp.x, tp.y - dy}, tp,
-                           type_error ? col_error : IM_COL32(255, 200, 80, 200), 2.5f * active().canvas_zoom);
+        ImU32 col = type_error ? col_error : wire_col(IM_COL32(255, 200, 80, 200));
+        float th = 2.5f * active().canvas_zoom;
+        if (named)
+            draw_dashed_bezier(dl, fp, {fp.x + dx, fp.y}, {tp.x, tp.y - dy}, tp, col, th, 8.0f * active().canvas_zoom, 4.0f * active().canvas_zoom);
+        else
+            dl->AddBezierCubic(fp, {fp.x + dx, fp.y}, {tp.x, tp.y - dy}, tp, col, th);
     } else if (to_lambda) {
-        draw_vbezier(dl, fp, tp, type_error ? col_error : IM_COL32(180, 130, 255, 200), 2.5f, active().canvas_zoom);
+        ImU32 col = type_error ? col_error : wire_col(IM_COL32(180, 130, 255, 200));
+        if (named)
+            draw_dashed_vbezier(dl, fp, tp, col, 2.5f, active().canvas_zoom);
+        else
+            draw_vbezier(dl, fp, tp, col, 2.5f, active().canvas_zoom);
     } else {
-        draw_vbezier(dl, fp, tp, type_error ? col_error : COL_LINK, 2.5f, active().canvas_zoom);
+        ImU32 col = type_error ? col_error : wire_col(COL_LINK);
+        if (named)
+            draw_dashed_vbezier(dl, fp, tp, col, 2.5f, active().canvas_zoom);
+        else
+            draw_vbezier(dl, fp, tp, col, 2.5f, active().canvas_zoom);
     }
 
     // Draw net name label at midpoint if the wire has a user-assigned name
