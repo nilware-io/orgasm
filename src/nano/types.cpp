@@ -508,6 +508,8 @@ std::string type_to_string(const TypePtr& t) {
         return s;
     }
     case TypeKind::Symbol:
+        if (t->wrapped_type)
+            return prefix + "symbol<" + t->symbol_name + "," + type_to_string(t->wrapped_type) + ">";
         return prefix + "symbol<" + t->symbol_name + ">";
     case TypeKind::UndefinedSymbol:
         return prefix + "undefined_symbol<" + t->symbol_name + ">";
@@ -519,7 +521,10 @@ std::string type_to_string(const TypePtr& t) {
 
 // --- types_compatible ---
 
-bool types_compatible(const TypePtr& from, const TypePtr& to) {
+bool types_compatible(const TypePtr& from_raw, const TypePtr& to_raw) {
+    // Auto-decay symbols for compatibility checks
+    auto from = decay_symbol(from_raw);
+    auto to = decay_symbol(to_raw);
     if (!from || !to) return true;
     if (from.get() == to.get()) return true;
     if (from->is_generic || to->is_generic) return true;

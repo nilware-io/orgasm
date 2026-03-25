@@ -207,8 +207,9 @@ TEST(parse_f32_literal) {
 TEST(parse_bool_true) {
     auto r = parse_expression("true");
     ASSERT(r.root != nullptr);
-    ASSERT_EQ(r.root->kind, ExprKind::SymbolRef);
-    ASSERT_EQ(r.root->symbol_name, "true");
+    ASSERT_EQ(r.root->kind, ExprKind::Literal);
+    ASSERT_EQ(r.root->literal_kind, LiteralKind::Bool);
+    ASSERT(r.root->bool_value == true);
 }
 
 TEST(parse_pin_ref) {
@@ -356,23 +357,27 @@ TEST(infer_var_ref) {
     auto* n = gb.find("e");
     ASSERT(n != nullptr);
     ASSERT(n->outputs[0]->resolved_type != nullptr);
-    ASSERT_TYPE(n->outputs[0].get(), "mytype");
+    // expr foo returns symbol<foo,mytype>
+    ASSERT_TYPE(n->outputs[0].get(), "symbol<foo,mytype>");
 }
 
-TEST(infer_unknown_var_error) {
+TEST(infer_unknown_var_returns_undefined_symbol) {
+    // Unknown identifiers return undefined_symbol, not an error
     GraphBuilder gb;
     gb.add("1", "expr", "nonexistent");
     gb.run_inference();
     auto* n = gb.find("1");
-    ASSERT(!n->error.empty());
+    ASSERT(n != nullptr);
+    ASSERT_TYPE(n->outputs[0].get(), "undefined_symbol<nonexistent>");
 }
 
-TEST(infer_unknown_bare_ident_error) {
+TEST(infer_unknown_bare_ident_returns_undefined_symbol) {
     GraphBuilder gb;
     gb.add("1", "expr", "foobar");
     gb.run_inference();
     auto* n = gb.find("1");
-    ASSERT(!n->error.empty());
+    ASSERT(n != nullptr);
+    ASSERT_TYPE(n->outputs[0].get(), "undefined_symbol<foobar>");
 }
 
 TEST(infer_pi_constant) {
@@ -381,9 +386,9 @@ TEST(infer_pi_constant) {
     gb.run_inference();
     auto* n = gb.find("1");
     ASSERT(n->error.empty());
-    // pi is float? (generic float)
+    // pi is symbol<pi,float<?>>
     ASSERT(n->outputs[0]->resolved_type != nullptr);
-    ASSERT(n->outputs[0]->resolved_type->is_generic);
+    ASSERT_TYPE(n->outputs[0].get(), "symbol<pi,float<?>>");
 }
 
 TEST(infer_propagation) {
@@ -1070,7 +1075,7 @@ TEST(decl_type_alias_no_fields_ok) {
     auto* n = gb.find("e");
     ASSERT(n != nullptr);
     ASSERT(n->error.empty());
-    ASSERT_TYPE(n->outputs[0].get(), "my_float");
+    ASSERT_TYPE(n->outputs[0].get(), "symbol<x,my_float>");
 }
 
 TEST(decl_type_func_alias_no_fields_ok) {
@@ -2787,7 +2792,7 @@ TEST(decl_local_registers_var_type) {
     gb.add("e", "expr", "myvar");
     gb.run_inference();
     ASSERT(gb.find("e")->error.empty());
-    ASSERT_TYPE(gb.find("e")->outputs[0].get(), "f32");
+    ASSERT_TYPE(gb.find("e")->outputs[0].get(), "symbol<myvar,f32>");
 }
 
 TEST(decl_local_named_type) {
@@ -5256,6 +5261,99 @@ TEST(expr_literal_bool_type_syntax) {
     ASSERT(n != nullptr);
     ASSERT(n->error.empty());
     ASSERT_TYPE(n->outputs[0], "literal<bool,true>");
+}
+
+// ============================================================
+// Symbol types — expr returns symbol<name,type> for known symbols
+// ============================================================
+
+TEST(expr_sin_returns_symbol) {
+    GraphBuilder gb;
+    gb.add("e1", "expr", "sin");
+    gb.run_inference();
+    auto* n = gb.find("e1");
+    ASSERT(n != nullptr);
+    ASSERT(n->error.empty());
+    auto ts = type_to_string(n->outputs[0]->resolved_type);
+    ASSERT_CONTAINS(ts.c_str(), "symbol<sin,");
+}
+
+TEST(expr_unknown_returns_undefined_symbol) {
+    GraphBuilder gb;
+    gb.add("e1", "expr", "xyz");
+    gb.run_inference();
+    auto* n = gb.find("e1");
+    ASSERT(n != nullptr);
+    ASSERT_TYPE(n->outputs[0], "undefined_symbol<xyz>");
+}
+
+TEST(symbol_decays_in_binary_op) {
+    // pi+1.0f should produce f32, not symbol<...>
+    GraphBuilder gb;
+    gb.add("e1", "expr", "pi+1.0f");
+    gb.run_inference();
+    auto* n = gb.find("e1");
+    ASSERT(n != nullptr);
+    auto ts = type_to_string(n->outputs[0]->resolved_type);
+    ASSERT_EQ(ts, "f32");
+}
+
+TEST(symbol_decays_in_func_call) {
+    // sin(1.0f) should produce f32, not symbol<...>
+    GraphBuilder gb;
+    gb.add("e1", "expr", "sin(1.0f)");
+    gb.run_inference();
+    auto* n = gb.find("e1");
+    ASSERT(n != nullptr);
+    ASSERT_EQ(type_to_string(n->outputs[0]->resolved_type), "f32");
+}
+
+TEST(symbol_flows_through_connection) {
+    // expr sin -> expr $0: $0 should receive the symbol type
+    GraphBuilder gb;
+    gb.add("e1", "expr", "sin");
+    gb.add("e2", "expr", "$0", 1);
+    gb.link("e1.out0", "e2.0");
+    gb.run_inference();
+    auto* n2 = gb.find("e2");
+    ASSERT(n2 != nullptr);
+    // The input pin gets the decayed type (connections decay symbols)
+    auto ts = type_to_string(n2->inputs[0]->resolved_type);
+    ASSERT_CONTAINS(ts.c_str(), "(");  // decayed to function type
+}
+
+TEST(symbol_decays_in_store) {
+    // store! x $0 — x resolves to symbol<x,&f32>, store should work
+    GraphBuilder gb;
+    gb.add("dv", "decl_var", "x f32");
+    gb.add("e1", "expr", "1.0f");
+    gb.add("st", "store!", "x $0");
+    gb.link("e1.out0", "st.0");
+    gb.run_inference();
+    auto* n = gb.find("st");
+    ASSERT(n != nullptr);
+    ASSERT(n->error.empty());
+}
+
+// ============================================================
+// Reserved keywords error in expr parser
+// ============================================================
+
+TEST(symbol_keyword_errors) {
+    auto r = parse_expression("symbol");
+    ASSERT(!r.error.empty());
+    ASSERT_CONTAINS(r.error.c_str(), "reserved");
+}
+
+TEST(undefined_symbol_keyword_errors) {
+    auto r = parse_expression("undefined_symbol");
+    ASSERT(!r.error.empty());
+    ASSERT_CONTAINS(r.error.c_str(), "reserved");
+}
+
+TEST(literal_keyword_without_angle_errors) {
+    auto r = parse_expression("literal");
+    ASSERT(!r.error.empty());
 }
 
 // ============================================================

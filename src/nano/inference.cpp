@@ -372,7 +372,8 @@ bool GraphInference::propagate_connections(FlowGraph& graph) {
     for (auto& link : graph.links) {
         if (link.from && link.to && link.from->resolved_type) {
             if (!link.to->resolved_type || (link.to->resolved_type->is_generic && !link.from->resolved_type->is_generic)) {
-                link.to->resolved_type = link.from->resolved_type;
+                // Symbols decay when flowing through connections
+                link.to->resolved_type = decay_symbol(link.from->resolved_type);
                 changed = true;
             }
         }
@@ -454,6 +455,19 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
             ctx.errors.clear();
             auto result_type = ctx.infer(expr);
 
+            // For non-expr nodes, decay symbols in expression types —
+            // symbols are first-class in expr outputs but decay on use in other nodes
+            if (!is_expr && result_type) {
+                result_type = decay_symbol(result_type);
+                // Also decay in the expression tree so downstream reads see decayed types
+                std::function<void(const ExprPtr&)> decay_tree = [&](const ExprPtr& e) {
+                    if (!e) return;
+                    if (e->resolved_type) e->resolved_type = decay_symbol(e->resolved_type);
+                    for (auto& c : e->children) decay_tree(c);
+                };
+                decay_tree(expr);
+            }
+
             // Surface inference errors
             if (!ctx.errors.empty() && node.error.empty())
                 node.error = ctx.errors[0];
@@ -502,14 +516,13 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
         // --- Passthrough nodes: propagate input type to output ---
 
         if (node.type_id == NodeTypeID::Dup) {
-            // dup: output = input type
-            // Input can be from a connection OR from inline expression
+            // dup: output = input type (decay symbols — dup is a value passthrough)
             TypePtr input_type = nullptr;
             if (!node.inputs.empty() && node.inputs[0]->resolved_type)
-                input_type = node.inputs[0]->resolved_type;
+                input_type = decay_symbol(node.inputs[0]->resolved_type);
             else if (!node.parsed_exprs.empty() && node.parsed_exprs[0] &&
                      node.parsed_exprs[0]->resolved_type)
-                input_type = node.parsed_exprs[0]->resolved_type;
+                input_type = decay_symbol(node.parsed_exprs[0]->resolved_type);
             if (input_type && !node.outputs.empty()) {
                 if (!node.outputs[0]->resolved_type || node.outputs[0]->resolved_type->is_generic) {
                     if (node.outputs[0]->resolved_type != input_type) {
@@ -585,9 +598,9 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
                 return nullptr;
             };
 
-            auto cond_type = get_arg_type(0);
-            auto true_type = get_arg_type(1);
-            auto false_type = get_arg_type(2);
+            auto cond_type = decay_symbol(get_arg_type(0));
+            auto true_type = decay_symbol(get_arg_type(1));
+            auto false_type = decay_symbol(get_arg_type(2));
 
             // Condition must be bool
             if (cond_type && !cond_type->is_generic && cond_type->kind != TypeKind::Bool) {
@@ -1157,7 +1170,7 @@ bool GraphInference::infer_expr_nodes(FlowGraph& graph) {
                     return node.inputs[0]->resolved_type;
                 return nullptr;
             };
-            auto cond_type = get_cond_type();
+            auto cond_type = decay_symbol(get_cond_type());
             if (cond_type && !cond_type->is_generic) {
                 auto resolved = ctx.resolve_type(cond_type);
                 if (!resolved || resolved->kind != TypeKind::Bool) {

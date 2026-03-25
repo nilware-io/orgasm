@@ -193,15 +193,26 @@ private:
     bool check_refs(const TypePtr& t, std::set<std::string>& visited, std::string& error);
 };
 
+// Decay a symbol to its wrapped type. If not a symbol, returns as-is.
+inline TypePtr decay_symbol(const TypePtr& t) {
+    if (!t) return t;
+    if (t->kind == TypeKind::Symbol && t->wrapped_type) return t->wrapped_type;
+    return t;
+}
+
 // --- Type utility functions ---
+// Note: these all auto-decay symbols to their wrapped types,
+// so symbol<x,f32> passes is_numeric() etc.
 
 inline bool is_numeric(const TypePtr& t) {
-    return t && t->kind == TypeKind::Scalar;
+    auto d = decay_symbol(t);
+    return d && d->kind == TypeKind::Scalar;
 }
 
 inline bool is_integer(const TypePtr& t) {
-    if (!t || t->kind != TypeKind::Scalar) return false;
-    switch (t->scalar) {
+    auto d = decay_symbol(t);
+    if (!d || d->kind != TypeKind::Scalar) return false;
+    switch (d->scalar) {
     case ScalarType::U8: case ScalarType::S8:
     case ScalarType::U16: case ScalarType::S16:
     case ScalarType::U32: case ScalarType::S32:
@@ -212,24 +223,27 @@ inline bool is_integer(const TypePtr& t) {
 }
 
 inline bool is_unsigned(const TypePtr& t) {
-    if (!t || t->kind != TypeKind::Scalar) return false;
-    switch (t->scalar) {
+    auto d = decay_symbol(t);
+    if (!d || d->kind != TypeKind::Scalar) return false;
+    switch (d->scalar) {
     case ScalarType::U8: case ScalarType::U16: case ScalarType::U32: case ScalarType::U64: return true;
     default: return false;
     }
 }
 
 inline bool is_signed_int(const TypePtr& t) {
-    if (!t || t->kind != TypeKind::Scalar) return false;
-    switch (t->scalar) {
+    auto d = decay_symbol(t);
+    if (!d || d->kind != TypeKind::Scalar) return false;
+    switch (d->scalar) {
     case ScalarType::S8: case ScalarType::S16: case ScalarType::S32: case ScalarType::S64: return true;
     default: return false;
     }
 }
 
 inline bool is_float(const TypePtr& t) {
-    if (!t || t->kind != TypeKind::Scalar) return false;
-    return t->scalar == ScalarType::F32 || t->scalar == ScalarType::F64;
+    auto d = decay_symbol(t);
+    if (!d || d->kind != TypeKind::Scalar) return false;
+    return d->scalar == ScalarType::F32 || d->scalar == ScalarType::F64;
 }
 
 // Strip literal_value from a type — used when operations consume literals
@@ -243,14 +257,16 @@ inline TypePtr strip_literal(const TypePtr& t) {
 }
 
 inline bool is_collection(const TypePtr& t) {
-    if (!t) return false;
-    return t->kind == TypeKind::Container || t->kind == TypeKind::Array || t->kind == TypeKind::Tensor;
+    auto d = decay_symbol(t);
+    if (!d) return false;
+    return d->kind == TypeKind::Container || d->kind == TypeKind::Array || d->kind == TypeKind::Tensor;
 }
 
 inline TypePtr element_type(const TypePtr& t) {
-    if (!t) return nullptr;
-    if (t->kind == TypeKind::Container || t->kind == TypeKind::Array || t->kind == TypeKind::Tensor)
-        return t->value_type;
+    auto d = decay_symbol(t);
+    if (!d) return nullptr;
+    if (d->kind == TypeKind::Container || d->kind == TypeKind::Array || d->kind == TypeKind::Tensor)
+        return d->value_type;
     return nullptr;
 }
 

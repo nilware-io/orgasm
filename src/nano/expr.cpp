@@ -473,6 +473,20 @@ ExprPtr ExprParser::parse_primary() {
                 return make_expr(ExprKind::Literal);
             }
         }
+        // true/false are literal booleans, not symbols
+        if (name == "true" || name == "false") {
+            auto node = make_expr(ExprKind::Literal);
+            node->literal_kind = LiteralKind::Bool;
+            node->bool_value = (name == "true");
+            advance();
+            return node;
+        }
+        // 'symbol' and 'undefined_symbol' are reserved type-system keywords
+        if (name == "symbol" || name == "undefined_symbol") {
+            if (error.empty()) error = "'" + name + "' is a reserved type keyword and cannot be used as an identifier";
+            advance();
+            return make_expr(ExprKind::Literal); // dummy
+        }
         auto node = make_expr(ExprKind::SymbolRef);
         node->symbol_name = name;
         node->var_name = name; // used by decl_var name resolution
@@ -771,6 +785,8 @@ TypePtr TypeInferenceContext::resolve_named(const std::string& name) {
 
 TypePtr TypeInferenceContext::resolve_type(const TypePtr& t) {
     if (!t) return nullptr;
+    // Auto-decay symbols
+    if (t->kind == TypeKind::Symbol && t->wrapped_type) return resolve_type(t->wrapped_type);
     if (t->kind == TypeKind::Named) {
         auto resolved = resolve_named(t->named_ref);
         if (resolved && resolved.get() != t.get()) return resolve_type(resolved);
@@ -837,14 +853,29 @@ TypePtr TypeInferenceContext::infer(const ExprPtr& expr) {
         result = [&]() -> TypePtr {
             // 1. Declared variables (var_types from decl_var)
             auto vit = var_types.find(expr->symbol_name);
-            if (vit != var_types.end()) return vit->second;
+            if (vit != var_types.end()) {
+                auto sym = std::make_shared<TypeExpr>();
+                sym->kind = TypeKind::Symbol;
+                sym->symbol_name = expr->symbol_name;
+                sym->wrapped_type = vit->second;
+                return sym;
+            }
             // 2. Symbol table (builtins + declarations)
             if (symbol_table) {
                 auto* e = symbol_table->lookup(expr->symbol_name);
-                if (e) return e->decay_type;
+                if (e) {
+                    auto sym = std::make_shared<TypeExpr>();
+                    sym->kind = TypeKind::Symbol;
+                    sym->symbol_name = expr->symbol_name;
+                    sym->wrapped_type = e->decay_type;
+                    return sym;
+                }
             }
-            add_error("Unknown identifier: " + expr->symbol_name);
-            return pool.t_unknown;
+            // 3. Unknown — return undefined_symbol<name>
+            auto sym = std::make_shared<TypeExpr>();
+            sym->kind = TypeKind::UndefinedSymbol;
+            sym->symbol_name = expr->symbol_name;
+            return sym;
         }();
         break;
 
@@ -899,7 +930,7 @@ TypePtr TypeInferenceContext::infer(const ExprPtr& expr) {
         break;
 
     case ExprKind::UnaryMinus: {
-        auto operand = resolve_type(infer(expr->children[0]));
+        auto operand = decay_symbol(resolve_type(infer(expr->children[0])));
         if (operand && is_numeric(operand)) {
             result = operand;
         } else if (operand && operand->is_generic) {
@@ -921,7 +952,7 @@ TypePtr TypeInferenceContext::infer(const ExprPtr& expr) {
         break;
 
     case ExprKind::FieldAccess: {
-        auto obj = infer(expr->children[0]);
+        auto obj = decay_symbol(infer(expr->children[0]));
         auto field_type = find_field_type(obj, expr->field_name);
         if (field_type) {
             result = field_type;
@@ -934,9 +965,9 @@ TypePtr TypeInferenceContext::infer(const ExprPtr& expr) {
     }
 
     case ExprKind::Index: {
-        auto obj = infer(expr->children[0]);
+        auto obj = decay_symbol(infer(expr->children[0]));
         auto obj_resolved = resolve_type(obj);
-        auto idx = infer(expr->children[1]);
+        auto idx = decay_symbol(infer(expr->children[1]));
         auto idx_resolved = resolve_type(idx);
 
         // Get the effective index type (unwrap collection for array manipulation)
@@ -1083,8 +1114,8 @@ TypePtr TypeInferenceContext::infer(const ExprPtr& expr) {
 }
 
 TypePtr TypeInferenceContext::infer_binary_op(const ExprPtr& expr) {
-    auto left_t = resolve_type(infer(expr->children[0]));
-    auto right_t = resolve_type(infer(expr->children[1]));
+    auto left_t = decay_symbol(resolve_type(infer(expr->children[0])));
+    auto right_t = decay_symbol(resolve_type(infer(expr->children[1])));
 
     bool is_comparison = (expr->bin_op == BinOp::Eq || expr->bin_op == BinOp::Ne ||
                           expr->bin_op == BinOp::Lt || expr->bin_op == BinOp::Gt ||
@@ -1176,7 +1207,7 @@ TypePtr TypeInferenceContext::infer_ref(const ExprPtr& expr) {
 
     if (inner->kind == ExprKind::SymbolRef) {
         // &name → reference to variable
-        auto var_type = infer(inner);
+        auto var_type = decay_symbol(infer(inner));
         if (var_type && !var_type->is_generic) {
             auto ref_type = std::make_shared<TypeExpr>(*var_type);
             ref_type->category = TypeCategory::Reference;
@@ -1258,7 +1289,7 @@ TypePtr TypeInferenceContext::infer_func_call(const ExprPtr& expr) {
     }
 
     // Lambda/function call: children[0] = callee, children[1..] = args
-    auto callee_type = infer(expr->children[0]);
+    auto callee_type = decay_symbol(infer(expr->children[0]));
     auto callee_resolved = resolve_type(callee_type);
     // Infer all argument types
     for (size_t i = 1; i < expr->children.size(); i++)
@@ -1318,10 +1349,10 @@ TypePtr TypeInferenceContext::infer_func_call(const ExprPtr& expr) {
 }
 
 TypePtr TypeInferenceContext::infer_builtin_call(const ExprPtr& expr) {
-    // Infer arg types
+    // Infer arg types (decay symbols — builtins operate on values)
     std::vector<TypePtr> arg_types;
     for (size_t i = 1; i < expr->children.size(); i++)
-        arg_types.push_back(infer(expr->children[i]));
+        arg_types.push_back(decay_symbol(infer(expr->children[i])));
 
     // All builtin results strip literal annotations — operations produce runtime values
     auto result = [&]() -> TypePtr {
