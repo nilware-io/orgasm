@@ -5062,7 +5062,7 @@ TEST(literal_unsigned_zero) {
     gi.run(gb.graph);
     auto* n = gb.find("e1");
     ASSERT(n != nullptr);
-    ASSERT_TYPE(n->outputs[0], "literal<unsigned<?>, 0>");
+    ASSERT_TYPE(n->outputs[0], "literal<unsigned<?>,0>");
 }
 
 TEST(literal_unsigned_42) {
@@ -5072,7 +5072,7 @@ TEST(literal_unsigned_42) {
     gi.run(gb.graph);
     auto* n = gb.find("e1");
     ASSERT(n != nullptr);
-    ASSERT_TYPE(n->outputs[0], "literal<unsigned<?>, 42>");
+    ASSERT_TYPE(n->outputs[0], "literal<unsigned<?>,42>");
 }
 
 TEST(literal_signed_neg1) {
@@ -5082,7 +5082,7 @@ TEST(literal_signed_neg1) {
     gi.run(gb.graph);
     auto* n = gb.find("e1");
     ASSERT(n != nullptr);
-    ASSERT_TYPE(n->outputs[0], "literal<signed<?>, -1>");
+    ASSERT_TYPE(n->outputs[0], "literal<signed<?>,-1>");
 }
 
 TEST(literal_signed_neg42) {
@@ -5092,7 +5092,7 @@ TEST(literal_signed_neg42) {
     gi.run(gb.graph);
     auto* n = gb.find("e1");
     ASSERT(n != nullptr);
-    ASSERT_TYPE(n->outputs[0], "literal<signed<?>, -42>");
+    ASSERT_TYPE(n->outputs[0], "literal<signed<?>,-42>");
 }
 
 TEST(literal_bool_true) {
@@ -5102,7 +5102,7 @@ TEST(literal_bool_true) {
     gi.run(gb.graph);
     auto* n = gb.find("e1");
     ASSERT(n != nullptr);
-    ASSERT_TYPE(n->outputs[0], "literal<bool, true>");
+    ASSERT_TYPE(n->outputs[0], "literal<bool,true>");
 }
 
 TEST(literal_bool_false) {
@@ -5112,7 +5112,7 @@ TEST(literal_bool_false) {
     gi.run(gb.graph);
     auto* n = gb.find("e1");
     ASSERT(n != nullptr);
-    ASSERT_TYPE(n->outputs[0], "literal<bool, false>");
+    ASSERT_TYPE(n->outputs[0], "literal<bool,false>");
 }
 
 TEST(literal_string_hello) {
@@ -5122,7 +5122,7 @@ TEST(literal_string_hello) {
     gi.run(gb.graph);
     auto* n = gb.find("e1");
     ASSERT(n != nullptr);
-    ASSERT_TYPE(n->outputs[0], "literal<string, \"hello\">");
+    ASSERT_TYPE(n->outputs[0], "literal<string,\"hello\">");
 }
 
 TEST(literal_string_empty) {
@@ -5132,7 +5132,7 @@ TEST(literal_string_empty) {
     gi.run(gb.graph);
     auto* n = gb.find("e1");
     ASSERT(n != nullptr);
-    ASSERT_TYPE(n->outputs[0], "literal<string, \"\">");
+    ASSERT_TYPE(n->outputs[0], "literal<string,\"\">");
 }
 
 TEST(literal_f32) {
@@ -5163,50 +5163,99 @@ TEST(literal_f64) {
 
 TEST(parse_literal_unsigned) {
     std::string err;
-    auto t = parse_type("literal<unsigned<?>, 0>", err);
+    auto t = parse_type("literal<unsigned<?>,0>", err);
     ASSERT(t != nullptr);
     ASSERT(err.empty());
-    ASSERT_EQ(type_to_string(t), "literal<unsigned<?>, 0>");
+    ASSERT_EQ(type_to_string(t), "literal<unsigned<?>,0>");
 }
 
 TEST(parse_literal_signed) {
     std::string err;
-    auto t = parse_type("literal<signed<?>, -1>", err);
+    auto t = parse_type("literal<signed<?>,-1>", err);
     ASSERT(t != nullptr);
     ASSERT(err.empty());
-    ASSERT_EQ(type_to_string(t), "literal<signed<?>, -1>");
+    ASSERT_EQ(type_to_string(t), "literal<signed<?>,-1>");
 }
 
 TEST(parse_literal_bool) {
     std::string err;
-    auto t = parse_type("literal<bool, true>", err);
+    auto t = parse_type("literal<bool,true>", err);
     ASSERT(t != nullptr);
     ASSERT(err.empty());
-    ASSERT_EQ(type_to_string(t), "literal<bool, true>");
+    ASSERT_EQ(type_to_string(t), "literal<bool,true>");
 }
 
 TEST(parse_literal_string) {
     std::string err;
-    auto t = parse_type("literal<string, \"hello\">", err);
+    auto t = parse_type("literal<string,\"hello\">", err);
     ASSERT(t != nullptr);
     ASSERT(err.empty());
-    ASSERT_EQ(type_to_string(t), "literal<string, \"hello\">");
+    ASSERT_EQ(type_to_string(t), "literal<string,\"hello\">");
 }
 
 TEST(parse_literal_float) {
     std::string err;
-    auto t = parse_type("literal<float<?>, 3.14>", err);
+    auto t = parse_type("literal<float<?>,3.14>", err);
     ASSERT(t != nullptr);
     ASSERT(err.empty());
-    ASSERT_EQ(type_to_string(t), "literal<float<?>, 3.14>");
+    ASSERT_EQ(type_to_string(t), "literal<float<?>,3.14>");
 }
 
 TEST(parse_literal_f32) {
     std::string err;
-    auto t = parse_type("literal<f32, 3.14f>", err);
+    auto t = parse_type("literal<f32,3.14f>", err);
     ASSERT(t != nullptr);
     ASSERT(err.empty());
-    ASSERT_EQ(type_to_string(t), "literal<f32, 3.14f>");
+    ASSERT_EQ(type_to_string(t), "literal<f32,3.14f>");
+}
+
+// ============================================================
+// Expr parser handles literal<T, V> syntax
+// ============================================================
+
+TEST(expr_literal_string_type_syntax) {
+    // expr literal<string,"abc"> should parse same as expr "abc"
+    GraphBuilder gb;
+    gb.add("e1", "expr", "literal<string,\"abc\">");
+    GraphInference gi(gb.pool);
+    gi.run(gb.graph);
+    auto* n = gb.find("e1");
+    ASSERT(n != nullptr);
+    ASSERT(n->error.empty());
+    ASSERT_TYPE(n->outputs[0], "literal<string,\"abc\">");
+}
+
+TEST(expr_literal_unsigned_type_syntax) {
+    GraphBuilder gb;
+    gb.add("e1", "expr", "literal<unsigned<?>,42>");
+    GraphInference gi(gb.pool);
+    gi.run(gb.graph);
+    auto* n = gb.find("e1");
+    ASSERT(n != nullptr);
+    ASSERT(n->error.empty());
+    ASSERT_TYPE(n->outputs[0], "literal<unsigned<?>,42>");
+}
+
+TEST(expr_literal_signed_type_syntax) {
+    GraphBuilder gb;
+    gb.add("e1", "expr", "literal<signed<?>,-5>");
+    GraphInference gi(gb.pool);
+    gi.run(gb.graph);
+    auto* n = gb.find("e1");
+    ASSERT(n != nullptr);
+    ASSERT(n->error.empty());
+    ASSERT_TYPE(n->outputs[0], "literal<signed<?>,-5>");
+}
+
+TEST(expr_literal_bool_type_syntax) {
+    GraphBuilder gb;
+    gb.add("e1", "expr", "literal<bool,true>");
+    GraphInference gi(gb.pool);
+    gi.run(gb.graph);
+    auto* n = gb.find("e1");
+    ASSERT(n != nullptr);
+    ASSERT(n->error.empty());
+    ASSERT_TYPE(n->outputs[0], "literal<bool,true>");
 }
 
 // ============================================================

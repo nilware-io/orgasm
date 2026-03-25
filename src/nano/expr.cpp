@@ -403,12 +403,79 @@ ExprPtr ExprParser::parse_primary() {
         return node;
     }
 
-    // Identifier: symbol reference (resolved via symbol table during inference)
+    // Identifier: check for type expression (literal<...>) or symbol reference
     if (check(ExprTokenKind::Ident)) {
         std::string name = current.text;
+        // Check if this is a type expression: literal<T, V>
+        // We need to parse it from the raw source since the tokenizer has consumed 'literal'
+        if (name == "literal") {
+            // Save tokenizer position to check if '<' follows
+            size_t saved_pos = tokenizer.pos;
+            auto saved_tok = current;
+            advance(); // consume 'literal'
+            if (check(ExprTokenKind::Lt)) {
+                // Looks like literal<...> — re-parse from the raw source using type parser
+                // Reconstruct by reading from saved position in the raw source
+                // The tokenizer.pos is now past '<', so we need to find the full literal<...> string
+                // Use the source directly from where 'literal' started
+                size_t literal_start = saved_pos - name.size(); // approximate start
+                // Better: just reconstruct from tokens
+                std::string type_str = "literal";
+                int depth = 0;
+                while (!check(ExprTokenKind::Eof)) {
+                    if (check(ExprTokenKind::Lt)) { depth++; type_str += "<"; advance(); }
+                    else if (check(ExprTokenKind::Gt)) {
+                        type_str += ">";
+                        advance();
+                        if (--depth <= 0) break;
+                    }
+                    else if (check(ExprTokenKind::Comma)) { type_str += ","; advance(); }
+                    else if (check(ExprTokenKind::String)) { type_str += "\"" + current.text + "\""; advance(); }
+                    else if (check(ExprTokenKind::Question)) { type_str += "?"; advance(); }
+                    else if (check(ExprTokenKind::Minus)) { type_str += "-"; advance(); }
+                    else { type_str += current.text; advance(); }
+                }
+                // Parse the reconstructed type string
+                std::string parse_err;
+                auto parsed_type = parse_type(type_str, parse_err);
+                if (!parsed_type || !parse_err.empty()) {
+                    if (error.empty()) error = "Invalid type expression: " + type_str + (parse_err.empty() ? "" : " (" + parse_err + ")");
+                    return make_expr(ExprKind::Literal);
+                }
+                // Create a Literal node from the parsed type
+                auto node = make_expr(ExprKind::Literal);
+                if (parsed_type->kind == TypeKind::String) {
+                    node->literal_kind = LiteralKind::String;
+                    if (parsed_type->literal_value.size() >= 2 && parsed_type->literal_value.front() == '"')
+                        node->string_value = parsed_type->literal_value.substr(1, parsed_type->literal_value.size() - 2);
+                } else if (parsed_type->kind == TypeKind::Bool) {
+                    node->literal_kind = LiteralKind::Bool;
+                    node->bool_value = (parsed_type->literal_value == "true");
+                } else if (parsed_type->kind == TypeKind::Scalar) {
+                    if (parsed_type->scalar == ScalarType::F32) {
+                        node->literal_kind = LiteralKind::F32;
+                        node->float_value = parsed_type->literal_value.empty() ? 0.0 : std::stod(parsed_type->literal_value);
+                    } else if (parsed_type->scalar == ScalarType::F64) {
+                        node->literal_kind = LiteralKind::F64;
+                        node->float_value = parsed_type->literal_value.empty() ? 0.0 : std::stod(parsed_type->literal_value);
+                    } else if (parsed_type->literal_signed) {
+                        node->literal_kind = LiteralKind::Signed;
+                        node->int_value = parsed_type->literal_value.empty() ? 0 : std::stoll(parsed_type->literal_value);
+                    } else {
+                        node->literal_kind = LiteralKind::Unsigned;
+                        node->int_value = parsed_type->literal_value.empty() ? 0 : std::stoll(parsed_type->literal_value);
+                    }
+                }
+                return node;
+            } else {
+                // 'literal' without '<' is invalid
+                if (error.empty()) error = "'literal' must be followed by '<type, value>'";
+                return make_expr(ExprKind::Literal);
+            }
+        }
         auto node = make_expr(ExprKind::SymbolRef);
         node->symbol_name = name;
-            node->var_name = name; // used by decl_var name resolution
+        node->var_name = name; // used by decl_var name resolution
         advance();
         return node;
     }

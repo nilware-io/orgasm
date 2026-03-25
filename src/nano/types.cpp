@@ -444,7 +444,7 @@ std::string type_to_string(const TypePtr& t) {
             else
                 domain = "unsigned<?>";
             if (!t->literal_value.empty())
-                return prefix + "literal<" + domain + ", " + t->literal_value + ">";
+                return prefix + "literal<" + domain + "," + t->literal_value + ">";
             return prefix + domain;
         }
         return prefix + "?";
@@ -453,17 +453,17 @@ std::string type_to_string(const TypePtr& t) {
     case TypeKind::Void: return prefix + "void";
     case TypeKind::Bool:
         if (!t->literal_value.empty())
-            return prefix + "literal<bool, " + t->literal_value + ">";
+            return prefix + "literal<bool," + t->literal_value + ">";
         return prefix + "bool";
     case TypeKind::String:
         if (!t->literal_value.empty())
-            return prefix + "literal<string, " + t->literal_value + ">";
+            return prefix + "literal<string," + t->literal_value + ">";
         return prefix + "string";
     case TypeKind::Mutex: return prefix + "mutex";
     case TypeKind::Scalar: {
         static const char* names[] = {"u8","s8","u16","s16","u32","s32","u64","s64","f32","f64"};
         if (!t->literal_value.empty())
-            return prefix + "literal<" + names[(int)t->scalar] + ", " + t->literal_value + ">";
+            return prefix + "literal<" + names[(int)t->scalar] + "," + t->literal_value + ">";
         return prefix + names[(int)t->scalar];
     }
     case TypeKind::Named: return prefix + t->named_ref;
