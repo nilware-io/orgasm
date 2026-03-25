@@ -32,7 +32,11 @@ struct ArgString2 { std::string value; };               // "hello\"world"
 struct ArgExpr2 { std::string expr; };                  // expression (contains $N, @N, operators, etc.)
 
 using FlowArg2 = std::variant<ArgNet2, ArgNumber2, ArgString2, ArgExpr2>;
-using ParsedArgs2 = std::vector<FlowArg2>;
+
+struct ParsedArgs2 : std::vector<FlowArg2> {
+    using vector::vector;
+    int rewrite_input_count = 0;  // count of unique $N refs across all expressions (contiguous from $0)
+};
 
 struct GraphBuilder; // forward for parse_args_v2
 

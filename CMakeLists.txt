@@ -60,6 +60,7 @@ if(ATTOLANG_BUILD_EDITOR)
     add_executable(attoflow
         src/attoflow/main.cpp
         src/attoflow/editor.cpp
+        src/attoflow/editor2.cpp
     )
     target_include_directories(attoflow PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src

@@ -1,6 +1,7 @@
 #include "graphbuilder.h"
 #include <sstream>
 #include <cctype>
+#include <set>
 
 // ─── TOML helpers ───
 
@@ -120,6 +121,39 @@ static FlowArg2 parse_token_v2(GraphBuilder& gb, const std::string& tok) {
 ParseResult parse_args_v2(const std::shared_ptr<GraphBuilder>& gb,
                           const std::vector<std::string>& exprs, bool is_expr) {
     auto result = std::make_shared<ParsedArgs2>();
+
+    // Scan all expressions for $N refs to compute rewrite_input_count
+    std::set<int> slot_indices;
+    for (auto& expr : exprs) {
+        for (size_t i = 0; i < expr.size(); i++) {
+            if (expr[i] == '$' && i + 1 < expr.size() && std::isdigit(expr[i + 1])) {
+                int n = 0;
+                size_t j = i + 1;
+                while (j < expr.size() && std::isdigit(expr[j])) {
+                    n = n * 10 + (expr[j] - '0');
+                    j++;
+                }
+                slot_indices.insert(n);
+            }
+        }
+    }
+
+    // Validate contiguous from 0
+    if (!slot_indices.empty()) {
+        int max_slot = *slot_indices.rbegin();
+        if ((int)slot_indices.size() != max_slot + 1) {
+            std::string missing;
+            for (int i = 0; i <= max_slot; i++) {
+                if (!slot_indices.count(i)) {
+                    if (!missing.empty()) missing += ", ";
+                    missing += "$" + std::to_string(i);
+                }
+            }
+            return std::string("Missing pin reference(s): " + missing);
+        }
+        result->rewrite_input_count = max_slot + 1;
+    }
+
     for (auto& expr : exprs) {
         result->push_back(parse_token_v2(*gb, expr));
     }
