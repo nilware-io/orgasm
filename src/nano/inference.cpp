@@ -242,7 +242,7 @@ void GraphInference::build_registry(FlowGraph& graph) {
             // Type alias (e.g. "osc_list list<osc_def>") or
             // Function type (e.g. "gen_fn (id:u64) -> osc_res")
             registry.register_type(tokens[0], def);
-        } else {
+        } else { 
             // Struct with fields — register as placeholder, fields validated separately
             registry.register_type(tokens[0], "void");
         }

@@ -15,13 +15,7 @@ struct ExprNode;
 using ExprPtr = std::shared_ptr<ExprNode>;
 
 enum class ExprKind {
-    IntLiteral,     // 42 (type deferred) — legacy, kept for backward compat
-    F32Literal,     // 1.0f — legacy
-    F64Literal,     // 1.0 — legacy
-    BoolLiteral,    // true, false — legacy
-    StringLiteral,  // "hello" — legacy
     PinRef,         // $0, $1, ... (only $N with digits)
-    VarRef,         // $name — legacy (kept for backward compat during transition)
     BinaryOp,       // +, -, *, /, ==, !=, <, >, <=, >=, <=>
     UnaryMinus,     // -expr
     FieldAccess,    // expr.field
@@ -31,7 +25,6 @@ enum class ExprKind {
     FuncCall,       // fn(args) — function/constructor/lambda calls
     Ref,            // &expr — reference/iterator creation (top-level only)
     Deref,          // *expr — dereference iterator to value (inserted by inference)
-    // --- New kinds for type system redesign ---
     Literal,        // Unified compile-time literal (int, float, string, bool)
     SymbolRef,      // Bare identifier — resolves via symbol table
     StructLiteral,  // {name:value, name:value, ...} — runtime struct construction
@@ -85,9 +78,9 @@ struct ExprNode {
     // PinRef
     PinRefInfo pin_ref;
 
-    // VarRef
+    // SymbolRef — variable/symbol name
     std::string var_name;
-    bool is_dollar_var = false; // true if came from $name, false if bare identifier
+    bool is_dollar_var = false; // deprecated: true if came from $name syntax
 
     // BinaryOp
     BinOp bin_op = BinOp::Add;

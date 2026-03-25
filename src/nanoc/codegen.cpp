@@ -293,30 +293,36 @@ std::string CodeGenerator::type_to_cpp_str(const std::string& type_str) {
 std::string CodeGenerator::expr_to_cpp(const ExprPtr& e, FlowNode* ctx_node) {
     if (!e) throw std::runtime_error("codegen: null expression");
     switch (e->kind) {
-    case ExprKind::IntLiteral: {
-        // If the resolved type is f32/f64, emit as float to avoid narrowing warnings
-        if (e->resolved_type && e->resolved_type->kind == TypeKind::Scalar) {
-            if (e->resolved_type->scalar == ScalarType::F32)
-                return std::to_string((float)e->int_value) + "f";
-            if (e->resolved_type->scalar == ScalarType::F64)
-                return std::to_string((double)e->int_value);
+    case ExprKind::Literal: {
+        switch (e->literal_kind) {
+        case LiteralKind::Unsigned:
+        case LiteralKind::Signed: {
+            // If the resolved type is f32/f64, emit as float to avoid narrowing warnings
+            if (e->resolved_type && e->resolved_type->kind == TypeKind::Scalar) {
+                if (e->resolved_type->scalar == ScalarType::F32)
+                    return std::to_string((float)e->int_value) + "f";
+                if (e->resolved_type->scalar == ScalarType::F64)
+                    return std::to_string((double)e->int_value);
+            }
+            return std::to_string(e->int_value);
         }
-        return std::to_string(e->int_value);
+        case LiteralKind::F32: return std::to_string(e->float_value) + "f";
+        case LiteralKind::F64: return std::to_string(e->float_value);
+        case LiteralKind::Bool: return e->bool_value ? "true" : "false";
+        case LiteralKind::String: return "\"" + e->string_value + "\"";
+        }
+        throw std::runtime_error("codegen: unknown literal kind");
     }
-    case ExprKind::F32Literal: return std::to_string(e->float_value) + "f";
-    case ExprKind::F64Literal: return std::to_string(e->float_value);
-    case ExprKind::BoolLiteral: return e->bool_value ? "true" : "false";
-    case ExprKind::StringLiteral: return "\"" + e->string_value + "\"";
     case ExprKind::PinRef: {
         if (ctx_node) return resolve_pin_value(*ctx_node, e->pin_ref.index);
         throw std::runtime_error("codegen: PinRef without node context");
     }
-    case ExprKind::VarRef: {
-        if (e->is_dollar_var) return e->var_name;
-        if (e->var_name == "pi") return "nano_pi";
-        if (e->var_name == "e") return "nano_e";
-        if (e->var_name == "tau") return "nano_tau";
-        return e->var_name;
+    case ExprKind::SymbolRef: {
+        // Resolve known constants
+        if (e->symbol_name == "pi") return "nano_pi";
+        if (e->symbol_name == "e") return "nano_e";
+        if (e->symbol_name == "tau") return "nano_tau";
+        return e->symbol_name;
     }
     case ExprKind::UnaryMinus:
         return "-(" + expr_to_cpp(e->children[0], ctx_node) + ")";
@@ -580,8 +586,8 @@ std::string CodeGenerator::materialize_node(FlowNode& node, std::ostringstream& 
                     auto& root = node.parsed_exprs[i];
                     if (root->kind == ExprKind::PinRef && !root->pin_ref.name.empty())
                         prefix = root->pin_ref.name;
-                    else if (root->kind == ExprKind::VarRef && root->is_dollar_var)
-                        prefix = root->var_name;
+                    else if (root->kind == ExprKind::SymbolRef)
+                        prefix = root->symbol_name;
                 }
                 std::string var = fresh_var(prefix);
                 std::string type_str = node.outputs[i]->resolved_type ? type_to_cpp(node.outputs[i]->resolved_type) : "auto";

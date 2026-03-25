@@ -27,7 +27,7 @@ ExprToken ExprTokenizer::next() {
         return {ExprTokenKind::Ampersand, "&"};
     }
 
-    // Pin reference: sigil + digit, or $ + identifier (VarRef handled in parser)
+    // Pin reference: $N (digits only), $name now errors
     if (is_sigil(c)) {
         char sigil = advance();
         if (!eof() && std::isdigit(peek())) {
@@ -341,10 +341,6 @@ ExprPtr ExprParser::parse_postfix() {
             if (left->kind == ExprKind::SymbolRef) {
                 node->func_name = left->symbol_name;
                 node->builtin = lookup_builtin(left->symbol_name);
-            } else if (left->kind == ExprKind::VarRef) {
-                // Legacy path for $name() calls
-                node->func_name = left->var_name;
-                node->builtin = lookup_builtin(left->var_name);
             }
             if (!check(ExprTokenKind::RParen)) {
                 node->children.push_back(parse_expr());
@@ -389,17 +385,15 @@ ExprPtr ExprParser::parse_primary() {
         return node;
     }
 
-    // Pin ref or var ref
+    // Pin ref
     if (check(ExprTokenKind::PinRef)) {
         auto& pr = current.pin_ref;
         if (pr.index < 0) {
-            // Variable reference ($name)
-            auto node = make_expr(ExprKind::VarRef);
-            node->var_name = pr.name;
-            node->is_dollar_var = true;
-            var_refs.push_back(pr.name);
+            // $name is no longer valid — use bare names instead
+            if (error.empty())
+                error = "$" + pr.name + " is not valid; use bare name '" + pr.name + "' instead";
             advance();
-            return node;
+            return make_expr(ExprKind::Literal); // dummy
         }
         // Numeric pin ref
         auto node = make_expr(ExprKind::PinRef);
@@ -414,8 +408,7 @@ ExprPtr ExprParser::parse_primary() {
         std::string name = current.text;
         auto node = make_expr(ExprKind::SymbolRef);
         node->symbol_name = name;
-        // Also set var_name for backward compat with inference code that checks VarRef
-        node->var_name = name;
+            node->var_name = name; // used by decl_var name resolution
         advance();
         return node;
     }
@@ -435,7 +428,7 @@ ExprPtr ExprParser::parse_primary() {
 
     if (error.empty())
         error = "Unexpected token: '" + current.text + "'";
-    return make_expr(ExprKind::IntLiteral); // dummy
+    return make_expr(ExprKind::Literal); // dummy
 }
 
 ExprPtr ExprParser::parse_struct_expr() {
@@ -608,8 +601,7 @@ void clear_expr_types(const ExprPtr& expr) {
 bool is_lvalue(const ExprPtr& e) {
     if (!e) return false;
     switch (e->kind) {
-    case ExprKind::VarRef:      return true;  // $name (legacy)
-    case ExprKind::SymbolRef:   return true;  // bare name (resolves to variable)
+    case ExprKind::SymbolRef:   return true;  // bare name or $name (resolves to variable)
     case ExprKind::PinRef:      return true;  // $N
     case ExprKind::FieldAccess: return is_lvalue(e->children[0]); // lvalue.field
     case ExprKind::Index:       return is_lvalue(e->children[0]); // lvalue[expr]
@@ -629,18 +621,12 @@ void collect_slots(const ExprPtr& expr, ExprSlotInfo& info) {
 std::string expr_to_string(const ExprPtr& e) {
     if (!e) return "<null>";
     switch (e->kind) {
-    case ExprKind::IntLiteral: return std::to_string(e->int_value);
-    case ExprKind::F32Literal: return std::to_string(e->float_value) + "f";
-    case ExprKind::F64Literal: return std::to_string(e->float_value);
-    case ExprKind::BoolLiteral: return e->bool_value ? "true" : "false";
-    case ExprKind::StringLiteral: return "\"" + e->string_value + "\"";
     case ExprKind::PinRef: {
         std::string s(1, e->pin_ref.sigil);
         s += std::to_string(e->pin_ref.index);
         if (!e->pin_ref.name.empty()) s += ":" + e->pin_ref.name;
         return s;
     }
-    case ExprKind::VarRef: return e->var_name;
     case ExprKind::UnaryMinus: return "-" + expr_to_string(e->children[0]);
     case ExprKind::BinaryOp: {
         static const char* ops[] = {"+","-","*","/","==","!=","<",">","<=",">=","<=>"};
@@ -774,57 +760,9 @@ TypePtr TypeInferenceContext::infer(const ExprPtr& expr) {
     TypePtr result = nullptr;
 
     switch (expr->kind) {
-    case ExprKind::IntLiteral:
-        result = pool.t_int_literal;
-        break;
-
-    case ExprKind::F32Literal:
-        result = pool.t_f32;
-        break;
-
-    case ExprKind::F64Literal:
-        result = pool.t_f64;
-        break;
-
-    case ExprKind::BoolLiteral:
-        result = pool.t_bool;
-        break;
-
-    case ExprKind::StringLiteral:
-        result = pool.t_string;
-        break;
-
     case ExprKind::PinRef: {
         auto it = input_pin_types.find(expr->pin_ref.index);
         result = (it != input_pin_types.end()) ? it->second : pool.t_unknown;
-        break;
-    }
-
-    case ExprKind::VarRef: {
-        if (expr->is_dollar_var) {
-            // $name — look up declared variable
-            auto it = var_types.find(expr->var_name);
-            if (it != var_types.end()) {
-                result = it->second;
-            } else {
-                add_error("Unknown variable: $" + expr->var_name);
-                result = pool.t_unknown;
-            }
-        } else {
-            // Bare identifier — check known constants, then error
-            static const std::map<std::string, double> known_constants = {
-                {"pi", 3.14159265358979323846},
-                {"e", 2.71828182845904523536},
-                {"tau", 6.28318530717958647692},
-            };
-            auto cit = known_constants.find(expr->var_name);
-            if (cit != known_constants.end()) {
-                result = pool.t_float_literal;
-            } else {
-                add_error("Unknown identifier: " + expr->var_name);
-                result = pool.t_unknown;
-            }
-        }
         break;
     }
 
@@ -1048,7 +986,6 @@ TypePtr TypeInferenceContext::infer(const ExprPtr& expr) {
     // produce values, not references. Only lvalue-compatible kinds keep references.
     if (expr->resolved_type && expr->resolved_type->category == TypeCategory::Reference) {
         bool is_lvalue_kind = (expr->kind == ExprKind::PinRef ||
-                               expr->kind == ExprKind::VarRef ||
                                expr->kind == ExprKind::SymbolRef ||
                                expr->kind == ExprKind::FieldAccess ||
                                expr->kind == ExprKind::Index ||
@@ -1170,7 +1107,7 @@ TypePtr TypeInferenceContext::infer_ref(const ExprPtr& expr) {
     // Only valid forms: &$name, &$name[expr]
     // Invalid: &$name.field, &$name[expr].field, &literal, &(expr), etc.
 
-    if (inner->kind == ExprKind::VarRef || inner->kind == ExprKind::SymbolRef) {
+    if (inner->kind == ExprKind::SymbolRef) {
         // &name → reference to variable
         auto var_type = infer(inner);
         if (var_type && !var_type->is_generic) {
@@ -1404,13 +1341,11 @@ TypePtr TypeInferenceContext::infer_builtin_call(const ExprPtr& expr) {
 
 void TypeInferenceContext::resolve_int_literals(const ExprPtr& expr, const TypePtr& expected) {
     if (!expr) return;
-    // Resolve unresolved integer literals (both legacy IntLiteral and new Literal kind)
     auto is_generic_int = [&](const TypePtr& t) {
         return t && t->is_generic && t->kind == TypeKind::Scalar &&
                t->scalar != ScalarType::F32 && t->scalar != ScalarType::F64;
     };
-    bool is_int_lit = (expr->kind == ExprKind::IntLiteral && is_generic_int(expr->resolved_type)) ||
-                      (expr->kind == ExprKind::Literal &&
+    bool is_int_lit = (expr->kind == ExprKind::Literal &&
                        (expr->literal_kind == LiteralKind::Unsigned ||
                         expr->literal_kind == LiteralKind::Signed) &&
                        is_generic_int(expr->resolved_type));
