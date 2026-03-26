@@ -867,6 +867,69 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
         }
     }
 
+    // ─── Re-ID: $auto-xxx → $a-N (compact hex IDs) ───
+    {
+        // Build rename map for $auto- entries
+        std::map<std::string, std::string> rename;
+        int next_id = 0;
+        for (auto& [id, _] : gb->entries) {
+            if (id.compare(0, 6, "$auto-") == 0) {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "$a-%x", next_id++);
+                rename[id] = buf;
+            }
+        }
+
+        // Also rename net names that start with $auto- but aren't in entries
+        // (they appear as ArgNet2 first-values referencing $auto- prefixed names)
+
+        // Helper: rename an id if it has a mapping
+        auto remap_id = [&](const std::string& id) -> std::string {
+            // Check exact match
+            auto it = rename.find(id);
+            if (it != rename.end()) return it->second;
+            // Check if it starts with a known $auto- prefix (e.g. "$auto-xxx-out0")
+            // Find the longest matching prefix
+            for (auto& [old_prefix, new_prefix] : rename) {
+                if (id.size() > old_prefix.size() && id.compare(0, old_prefix.size(), old_prefix) == 0) {
+                    // Check the char after the prefix is a separator
+                    char sep = id[old_prefix.size()];
+                    if (sep == '-' || sep == '_') {
+                        return new_prefix + id.substr(old_prefix.size());
+                    }
+                }
+            }
+            return id;
+        };
+
+        // Helper: rename ArgNet2 in-place
+        auto remap_arg = [&](FlowArg2& a) {
+            if (auto* an = std::get_if<ArgNet2>(&a))
+                an->first = remap_id(an->first);
+        };
+        auto remap_args = [&](ParsedArgs2* pa) {
+            if (!pa) return;
+            for (auto& a : *pa) remap_arg(a);
+        };
+
+        // Rename all references inside nodes
+        for (auto& [id, entry] : gb->entries) {
+            if (!std::holds_alternative<FlowNodeBuilder>(*entry)) continue;
+            auto& node = std::get<FlowNodeBuilder>(*entry);
+            remap_args(node.parsed_args.get());
+            remap_args(node.parsed_va_args.get());
+            for (auto& r : node.remaps) r.first = remap_id(r.first);
+            for (auto& o : node.outputs) o.first = remap_id(o.first);
+        }
+
+        // Rebuild entries map with new keys
+        std::map<NodeId, BuilderEntryPtr> new_entries;
+        for (auto& [id, entry] : gb->entries) {
+            new_entries[remap_id(id)] = std::move(entry);
+        }
+        gb->entries = std::move(new_entries);
+    }
+
     gb->compact();
 
     return gb;
