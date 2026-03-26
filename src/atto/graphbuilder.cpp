@@ -278,6 +278,14 @@ void GraphBuilder::compact() {
     }
 }
 
+NodeId GraphBuilder::next_id() {
+    for (int n = 0; ; n++) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "$a-%x", n);
+        if (!entries.count(buf)) return buf;
+    }
+}
+
 // ─── Deserializer ───
 
 BuilderResult Deserializer::parse_node(

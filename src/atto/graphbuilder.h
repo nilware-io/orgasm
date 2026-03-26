@@ -101,6 +101,9 @@ struct GraphBuilder {
     std::pair<NodeId, BuilderEntryPtr> find_entity(const NodeId& id);  // returns node or net
 
     void compact();
+
+    // Returns the next unused $a-N id
+    NodeId next_id();
 };
 
 // Deserializer: parses raw strings into FlowNodeBuilder, with error fallback.
