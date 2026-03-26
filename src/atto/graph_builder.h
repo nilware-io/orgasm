@@ -209,8 +209,8 @@ struct BuilderEntry: std::enable_shared_from_this<BuilderEntry> {
 
     bool is(IdCategory cat) const { return category_ == cat; }
 
-    std::shared_ptr<FlowNodeBuilder> as_Node();
-    std::shared_ptr<NetBuilder> as_Net();
+    std::shared_ptr<FlowNodeBuilder> as_node();
+    std::shared_ptr<NetBuilder> as_net();
 
     std::shared_ptr<GraphBuilder> owner() const { return owner_; }
     void owner(const std::shared_ptr<GraphBuilder>& gb) { owner_ = gb; }

@@ -282,7 +282,7 @@ void Editor2Pane::draw() {
 
     // Draw nodes (skip shadows)
     for (auto& [id, entry] : gb_->entries) {
-        if (auto node = entry->as_Node()) {
+        if (auto node = entry->as_node()) {
             if (node->shadow) throw std::logic_error("Editor2Pane: shadow nodes must be folded before rendering (id: " + id + ")");
             draw_node(dl, node, canvas_origin);
         }
@@ -292,7 +292,7 @@ void Editor2Pane::draw() {
     std::vector<WireInfo> drawn_wires; // collect for hover testing
 
     for (auto& [dst_id, dst_entry] : gb_->entries) {
-        auto dst_node = dst_entry->as_Node();
+        auto dst_node = dst_entry->as_node();
         if (!dst_node) continue;
 
         auto* dst_nt = find_node_type2(dst_node->type_id);
@@ -309,10 +309,10 @@ void Editor2Pane::draw() {
             bool is_lambda = false;
             int source_pin = 0;
 
-            if (auto net = entry->as_Net()) {
+            if (auto net = entry->as_net()) {
                 if (net->is_the_unconnected()) return;
                 auto src_ptr = net->source().lock();
-                src_node = src_ptr ? src_ptr->as_Node() : nullptr;
+                src_node = src_ptr ? src_ptr->as_node() : nullptr;
                 if (!src_node) return;
                 named = !net->auto_wire();
                 // Search fixed outputs
@@ -334,7 +334,7 @@ void Editor2Pane::draw() {
                         }
                     }
                 }
-            } else if (auto node = entry->as_Node()) {
+            } else if (auto node = entry->as_node()) {
                 src_node = node;
                 is_lambda = true;
             } else {
@@ -436,7 +436,7 @@ void Editor2Pane::draw() {
     // Extract hover node from variant
     FlowNodeBuilderPtr hover_node = nullptr;
     if (auto* ep = std::get_if<BuilderEntryPtr>(&hover_item_)) {
-        if (*ep) hover_node = (*ep)->as_Node();
+        if (*ep) hover_node = (*ep)->as_node();
     } else if (auto* pin = std::get_if<FlowArg2Ptr>(&hover_item_)) {
         hover_node = (*pin)->node();
     }
@@ -465,7 +465,7 @@ void Editor2Pane::draw() {
             for (auto& sel : selected_nodes_) {
                 auto sel_layout = compute_node_layout(sel, {0,0}, 1.0f);
                 for (auto& [oid, oe] : gb_->entries) {
-                    auto on = oe->as_Node();
+                    auto on = oe->as_node();
                     if (!on || selected_nodes_.count(on)) continue;
                     auto ol = compute_node_layout(on, {0,0}, 1.0f);
                     if (sel->position.x < on->position.x - pad + ol.width + pad * 2 &&
@@ -502,7 +502,7 @@ void Editor2Pane::draw() {
                 auto sel_layout = compute_node_layout(sel, {0,0}, 1.0f);
                 float nx = sel->position.x + dx, ny = sel->position.y + dy;
                 for (auto& [oid, oe] : gb_->entries) {
-                    auto on = oe->as_Node();
+                    auto on = oe->as_node();
                     if (!on || selected_nodes_.count(on)) continue;
                     auto ol = compute_node_layout(on, {0,0}, 1.0f);
                     float ox = on->position.x - pad, oy = on->position.y - pad;
@@ -544,7 +544,7 @@ void Editor2Pane::draw() {
         // Recalculate selection set every frame
         selected_nodes_.clear();
         for (auto& [id, entry] : gb_->entries) {
-            auto node = entry->as_Node();
+            auto node = entry->as_node();
             if (!node) continue;
             auto layout = compute_node_layout(node, {0,0}, 1.0f);
             float nx0 = node->position.x, ny0 = node->position.y;
@@ -975,7 +975,7 @@ Editor2Pane::HoverItem Editor2Pane::detect_hover(
 
     // Nodes — distance from mouse to nearest edge of node rect
     for (auto it = gb_->entries.rbegin(); it != gb_->entries.rend(); ++it) {
-        auto node = it->second->as_Node();
+        auto node = it->second->as_node();
         if (!node) continue;
         auto layout = compute_node_layout(node, canvas_origin, canvas_zoom_);
 
@@ -1001,7 +1001,7 @@ Editor2Pane::HoverItem Editor2Pane::detect_hover(
 
     // Pins — check all nodes, find closest pin globally
     for (auto it = gb_->entries.rbegin(); it != gb_->entries.rend(); ++it) {
-        auto node = it->second->as_Node();
+        auto node = it->second->as_node();
         if (!node) continue;
         auto* nt = find_node_type2(node->type_id);
         if (!nt) continue;
@@ -1096,7 +1096,7 @@ void Editor2Pane::draw_hover_effects(
 
     if (auto* ep = std::get_if<BuilderEntryPtr>(&hover)) {
         hover_entry = *ep;
-        hover_node = hover_entry ? hover_entry->as_Node() : nullptr;
+        hover_node = hover_entry ? hover_entry->as_node() : nullptr;
     } else if (auto* pp = std::get_if<FlowArg2Ptr>(&hover)) {
         hover_pin = *pp;
     }
@@ -1110,7 +1110,7 @@ void Editor2Pane::draw_hover_effects(
     }
 
     // Wire/net hovered: highlight all wires in the same net + lambda source node
-    if (hover_entry && hover_entry->as_Net()) {
+    if (hover_entry && hover_entry->as_net()) {
         for (auto& w : drawn_wires) {
             if (w.entry() == hover_entry)
                 dl->AddBezierCubic(w.p0, w.p1, w.p2, w.p3, S.col_pin_hover, th_wire);
@@ -1132,11 +1132,5 @@ void Editor2Pane::draw_hover_effects(
                 }
             }
         }
-    }
-
-    // Lambda node hovered via wire: highlight the source node
-    if (hover_entry && hover_entry->as_Node() && !hover_node) {
-        // This case doesn't happen — if entry is a node, hover_node is set.
-        // Lambda source highlighting is handled above.
     }
 }
