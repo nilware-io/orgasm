@@ -1386,6 +1386,57 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
         }
     }
 
+    // ─── Remove nets with no destinations → replace with $unconnected ───
+    {
+        auto unconnected = gb->unconnected_net();
+        auto unconnected_entry = std::static_pointer_cast<BuilderEntry>(unconnected);
+
+        // Collect nets to remove (have source but no destinations)
+        std::set<BuilderEntryPtr> dead_nets;
+        for (auto& [id, entry] : gb->entries) {
+            auto net = entry->as_net();
+            if (!net || net->is_the_unconnected()) continue;
+            net->compact();
+            if (net->destinations().empty()) {
+                dead_nets.insert(entry);
+            }
+        }
+
+        if (!dead_nets.empty()) {
+            // Replace all ArgNet2 references to dead nets with $unconnected
+            auto fixup_arg = [&](const FlowArg2Ptr& a) {
+                auto n = a->as_net();
+                if (!n) return;
+                if (dead_nets.count(n->second())) {
+                    n->entry(unconnected_entry);
+                    n->net_id(unconnected->id());
+                }
+            };
+            auto fixup_args = [&](ParsedArgs2* pa) {
+                if (!pa) return;
+                for (auto& a : *pa) fixup_arg(a);
+            };
+
+            for (auto& [id, entry] : gb->entries) {
+                auto node = entry->as_node();
+                if (!node) continue;
+                fixup_args(node->parsed_args.get());
+                fixup_args(node->parsed_va_args.get());
+                for (auto& r : node->remaps) fixup_arg(r);
+                for (auto& o : node->outputs) fixup_arg(o);
+                for (auto& o : node->outputs_va_args) fixup_arg(o);
+            }
+
+            // Remove dead nets from entries
+            for (auto it = gb->entries.begin(); it != gb->entries.end(); ) {
+                if (dead_nets.count(it->second))
+                    it = gb->entries.erase(it);
+                else
+                    ++it;
+            }
+        }
+    }
+
     // ─── Re-ID: $auto-xxx → $a-N (compact hex IDs) ───
     {
         // Build rename map for $auto- entries
