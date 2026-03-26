@@ -1,5 +1,6 @@
 #include "graphbuilder.h"
 #include "node_types2.h"
+#include "expr.h"
 #include <sstream>
 #include <cctype>
 #include <set>
@@ -381,11 +382,163 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
             auto [_, net_ptr] = gb->find_or_create_net(net_name, true);
             std::get<NetBuilder>(*net_ptr).source = node_entry;
         }
-        // Wire nets from inputs (this node is destination)
-        for (auto& net_name : cur_inputs) {
-            if (net_name.empty()) continue;
-            auto [_, net_ptr] = gb->find_or_create_net(net_name);
-            std::get<NetBuilder>(*net_ptr).destinations.push_back(node_entry);
+
+        // ─── v0 → v1 port mapping: merge inputs + args by port name ───
+        if (!cur_inputs.empty() && !cur_shadow) {
+            auto* old_nt = find_node_type(cur_type.c_str());
+            auto* new_nt = find_node_type2(nb.type_id);
+            bool is_expr = is_any_of(nb.type_id, NodeTypeID::Expr, NodeTypeID::ExprBang);
+            bool args_are_type = is_any_of(nb.type_id, NodeTypeID::Cast, NodeTypeID::New);
+
+            // Helper: resolve net name to ArgNet2 and register destination
+            auto resolve_net = [&](const std::string& net_name) -> ArgNet2 {
+                auto [resolved, ptr] = gb->find_or_create_net(
+                    net_name.empty() ? "$unconnected" : net_name);
+                if (!net_name.empty())
+                    std::get<NetBuilder>(*ptr).destinations.push_back(node_entry);
+                return {resolved, ptr};
+            };
+
+            if (is_expr || !old_nt || !new_nt) {
+                // Expr nodes or unknown types: simple positional mapping
+                // inputs map directly as ArgNet2 entries prepended to parsed_args
+                auto merged = std::make_shared<ParsedArgs2>();
+                for (auto& net_name : cur_inputs)
+                    merged->push_back(resolve_net(net_name));
+                if (nb.parsed_args) {
+                    for (auto& a : *nb.parsed_args)
+                        merged->push_back(std::move(a));
+                    merged->rewrite_input_count = nb.parsed_args->rewrite_input_count;
+                }
+                nb.parsed_args = std::move(merged);
+            } else {
+                // Name-based mapping using old and new descriptors
+
+                // Step 1: Build old pin name list (matching inputs array order)
+                std::vector<std::string> old_pin_names;
+                // Triggers first
+                for (int i = 0; i < old_nt->num_triggers; i++) {
+                    if (old_nt->trigger_ports)
+                        old_pin_names.push_back(old_nt->trigger_ports[i].name);
+                    else
+                        old_pin_names.push_back("bang_in");
+                }
+                // Data pins depend on args
+                std::string args_joined;
+                for (auto& a : cur_args) {
+                    if (!args_joined.empty()) args_joined += " ";
+                    args_joined += a;
+                }
+
+                if (args_are_type) {
+                    // Type nodes: all descriptor inputs become pins
+                    for (int i = 0; i < old_nt->inputs; i++) {
+                        if (old_nt->input_ports && i < old_nt->inputs)
+                            old_pin_names.push_back(old_nt->input_ports[i].name);
+                        else
+                            old_pin_names.push_back(std::to_string(i));
+                    }
+                } else {
+                    auto info = compute_inline_args(args_joined, old_nt->inputs);
+                    // $N ref pins first
+                    int ref_pins = (info.pin_slots.max_slot >= 0) ? (info.pin_slots.max_slot + 1) : 0;
+                    for (int i = 0; i < ref_pins; i++) {
+                        bool is_lambda = info.pin_slots.is_lambda_slot(i);
+                        old_pin_names.push_back(is_lambda ? ("@" + std::to_string(i)) : std::to_string(i));
+                    }
+                    // Remaining descriptor pins
+                    for (int i = info.num_inline_args; i < old_nt->inputs; i++) {
+                        if (old_nt->input_ports && i < old_nt->inputs)
+                            old_pin_names.push_back(old_nt->input_ports[i].name);
+                        else
+                            old_pin_names.push_back(std::to_string(i));
+                    }
+                }
+
+                // Step 2: Build port_name → ArgNet2 map from inputs array
+                std::map<std::string, ArgNet2> net_map;
+                for (int i = 0; i < (int)cur_inputs.size() && i < (int)old_pin_names.size(); i++) {
+                    net_map[old_pin_names[i]] = resolve_net(cur_inputs[i]);
+                }
+
+                // Step 3: Build port_name → parsed_value map from inlined args
+                // Inlined args cover input_ports[0..num_inline_args-1]
+                std::map<std::string, FlowArg2> inline_map;
+                if (!args_are_type && nb.parsed_args) {
+                    auto info = compute_inline_args(args_joined, old_nt->inputs);
+                    int num_inline = std::min(info.num_inline_args, old_nt->inputs);
+                    for (int i = 0; i < num_inline && i < (int)nb.parsed_args->size(); i++) {
+                        if (old_nt->input_ports && i < old_nt->inputs)
+                            inline_map[old_nt->input_ports[i].name] = std::move((*nb.parsed_args)[i]);
+                    }
+                }
+
+                // Step 4: Build unified parsed_args in new descriptor order
+                auto merged = std::make_shared<ParsedArgs2>();
+                if (nb.parsed_args)
+                    merged->rewrite_input_count = nb.parsed_args->rewrite_input_count;
+
+                // Helper: find value by port name with fallback for bang→bang_in rename
+                auto find_by_name = [&](const char* name) -> std::pair<bool, FlowArg2> {
+                    auto net_it = net_map.find(name);
+                    if (net_it != net_map.end())
+                        return {true, std::move(net_it->second)};
+                    auto inline_it = inline_map.find(name);
+                    if (inline_it != inline_map.end())
+                        return {true, std::move(inline_it->second)};
+                    // Fallback: old "bang" → new "bang_in"
+                    if (strcmp(name, "bang_in") == 0) {
+                        auto it2 = net_map.find("bang");
+                        if (it2 != net_map.end())
+                            return {true, std::move(it2->second)};
+                    }
+                    return {false, {}};
+                };
+
+                // Pass 1: fill by name matching
+                std::vector<bool> filled(new_nt->num_inputs, false);
+                for (int i = 0; i < new_nt->num_inputs; i++) {
+                    auto [found, value] = find_by_name(new_nt->input_ports[i].name);
+                    if (found) {
+                        merged->push_back(std::move(value));
+                        filled[i] = true;
+                    } else {
+                        merged->push_back(resolve_net("")); // placeholder
+                    }
+                }
+
+                // Pass 2: fill unfilled non-bang slots from unconsumed parsed_args
+                // inline_map consumed parsed_args[0..num_inline-1]; rest are available
+                if (nb.parsed_args) {
+                    int consumed = 0;
+                    if (!args_are_type) {
+                        auto info2 = compute_inline_args(args_joined, old_nt->inputs);
+                        consumed = std::min(info2.num_inline_args, (int)nb.parsed_args->size());
+                        consumed = std::min(consumed, old_nt->inputs);
+                    }
+                    int arg_cursor = consumed;
+                    for (int i = 0; i < new_nt->num_inputs; i++) {
+                        if (!filled[i] && new_nt->input_ports[i].kind != PortKind2::BangTrigger) {
+                            if (arg_cursor < (int)nb.parsed_args->size()) {
+                                (*merged)[i] = std::move((*nb.parsed_args)[arg_cursor++]);
+                                filled[i] = true;
+                            }
+                        }
+                    }
+                    // Remaining args beyond descriptor slots → appended (for va_args split later)
+                    for (; arg_cursor < (int)nb.parsed_args->size(); arg_cursor++)
+                        merged->push_back(std::move((*nb.parsed_args)[arg_cursor]));
+                }
+
+                nb.parsed_args = std::move(merged);
+            }
+        } else if (!cur_inputs.empty() && cur_shadow) {
+            // Shadows: inputs wired as net destinations (handled during folding)
+            for (auto& net_name : cur_inputs) {
+                if (net_name.empty()) continue;
+                auto [_, net_ptr] = gb->find_or_create_net(net_name);
+                std::get<NetBuilder>(*net_ptr).destinations.push_back(node_entry);
+            }
         }
 
         cur_id.clear(); cur_type.clear(); cur_args.clear();
@@ -519,12 +672,8 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
         auto* nt = find_node_type2(node.type_id);
         if (!nt || !nt->va_args || !node.parsed_args) continue;
 
-        // Count non-bang fixed inputs (args don't include bang triggers)
-        int fixed_args = 0;
-        for (int i = 0; i < nt->num_inputs; i++) {
-            if (nt->input_ports && nt->input_ports[i].kind != PortKind2::BangTrigger)
-                fixed_args++;
-        }
+        // Split at descriptor input count — inputs are merged first, then args
+        int fixed_args = nt->num_inputs;
 
         if ((int)node.parsed_args->size() > fixed_args) {
             node.parsed_va_args = std::make_shared<ParsedArgs2>();

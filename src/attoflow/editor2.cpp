@@ -300,7 +300,7 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
     }
 
     // Draw input pins (top)
-    // Pin order: parsed_args ArgNet2, then va_args ArgNet2, then remaps
+    // Pin order: parsed_args ArgNet2 (inputs merged first), then va_args ArgNet2, then remaps
     float pr = PIN_RADIUS * canvas_zoom_;
     auto count_net_args_in = [](const ParsedArgs2* pa) -> int {
         if (!pa) return 0;
@@ -313,18 +313,9 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
     for (int i = 0; i < layout.num_in; i++) {
         ImVec2 pp = layout.input_pin_pos(i);
         PortKind2 kind = PortKind2::Data;
-        if (i < base_pin_count) {
-            // Map visible pin index to descriptor port (skip bang triggers since they're not in parsed_args)
-            if (nt->input_ports) {
-                int vis = 0;
-                for (int p = 0; p < nt->num_inputs; p++) {
-                    if (nt->input_ports[p].kind != PortKind2::BangTrigger) {
-                        if (vis == i) { kind = nt->input_ports[p].kind; break; }
-                        vis++;
-                    }
-                }
-            }
-        } else if (i < base_pin_count + va_pin_count) {
+        if (i < base_pin_count && nt->input_ports && i < nt->num_inputs) {
+            kind = nt->input_ports[i].kind;
+        } else if (i >= base_pin_count && i < base_pin_count + va_pin_count) {
             kind = nt->va_args ? nt->va_args->kind : PortKind2::Data;
         }
 
@@ -350,6 +341,48 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
         } else {
             dl->AddCircleFilled(pp, pr, pc);
         }
+    }
+
+    // Hover tooltip: show parsed_args, parsed_va_args, remaps
+    ImVec2 mouse = ImGui::GetMousePos();
+    if (mouse.x >= layout.pos.x && mouse.x <= layout.pos.x + layout.width &&
+        mouse.y >= layout.pos.y && mouse.y <= layout.pos.y + layout.height) {
+        ImGui::BeginTooltip();
+        ImGui::Text("id: %s", id.c_str());
+        if (node.parsed_args) {
+            ImGui::Text("parsed_args (%d):", (int)node.parsed_args->size());
+            for (int i = 0; i < (int)node.parsed_args->size(); i++) {
+                auto& a = (*node.parsed_args)[i];
+                if (auto* n = std::get_if<ArgNet2>(&a))
+                    ImGui::Text("  [%d] net: %s", i, n->first.c_str());
+                else if (auto* e = std::get_if<ArgExpr2>(&a))
+                    ImGui::Text("  [%d] expr: %s", i, e->expr.c_str());
+                else if (auto* s = std::get_if<ArgString2>(&a))
+                    ImGui::Text("  [%d] str: %s", i, s->value.c_str());
+                else if (auto* v = std::get_if<ArgNumber2>(&a))
+                    ImGui::Text("  [%d] num: %g", i, v->value);
+            }
+        }
+        if (node.parsed_va_args && !node.parsed_va_args->empty()) {
+            ImGui::Text("parsed_va_args (%d):", (int)node.parsed_va_args->size());
+            for (int i = 0; i < (int)node.parsed_va_args->size(); i++) {
+                auto& a = (*node.parsed_va_args)[i];
+                if (auto* n = std::get_if<ArgNet2>(&a))
+                    ImGui::Text("  [%d] net: %s", i, n->first.c_str());
+                else if (auto* e = std::get_if<ArgExpr2>(&a))
+                    ImGui::Text("  [%d] expr: %s", i, e->expr.c_str());
+                else if (auto* s = std::get_if<ArgString2>(&a))
+                    ImGui::Text("  [%d] str: %s", i, s->value.c_str());
+                else if (auto* v = std::get_if<ArgNumber2>(&a))
+                    ImGui::Text("  [%d] num: %g", i, v->value);
+            }
+        }
+        if (!node.remaps.empty()) {
+            ImGui::Text("remaps (%d):", (int)node.remaps.size());
+            for (int i = 0; i < (int)node.remaps.size(); i++)
+                ImGui::Text("  $%d -> %s", i, node.remaps[i].first.c_str());
+        }
+        ImGui::EndTooltip();
     }
 }
 
