@@ -293,6 +293,18 @@ NodeId GraphBuilder::next_id() {
     }
 }
 
+bool GraphBuilder::rename(const BuilderEntryPtr& entry, const NodeId& new_id) {
+    if (!entry) return false;
+    if (entries.count(new_id)) return false; // collision
+
+    const NodeId old_id = entry->id();
+    entries.erase(old_id);
+    entry->id(new_id);
+    entries[new_id] = entry;
+    mark_dirty();
+    return true;
+}
+
 // ─── Deserializer ───
 
 BuilderResult Deserializer::parse_node(

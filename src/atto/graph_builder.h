@@ -222,6 +222,9 @@ struct GraphBuilder : std::enable_shared_from_this<GraphBuilder> {
 
     NodeId next_id();
 
+    // Rename an entry (node or net). Returns false if new_id already exists.
+    bool rename(const BuilderEntryPtr& entry, const NodeId& new_id);
+
     // Dirty tracking
     void mark_dirty() { dirty_ = true; }
     bool is_dirty() { return dirty_; }
