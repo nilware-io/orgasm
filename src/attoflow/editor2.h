@@ -17,7 +17,7 @@ public:
     void draw();
 
     bool is_loaded() const { return gb_ != nullptr; }
-    bool is_dirty() const { return dirty_; }
+    bool is_dirty() const { return gb_ && gb_->is_dirty(); }
     const std::string& file_path() const { return file_path_; }
     const std::string& tab_name() const { return tab_name_; }
 
@@ -25,7 +25,6 @@ private:
     std::shared_ptr<GraphBuilder> gb_;
     std::string file_path_;
     std::string tab_name_;
-    bool dirty_ = false;
 
     // Canvas state
     ImVec2 canvas_offset_ = {0, 0};

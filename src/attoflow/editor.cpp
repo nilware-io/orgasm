@@ -861,8 +861,13 @@ void FlowEditorWindow::draw() {
     // --- Tab bar ---
     if (ImGui::BeginTabBar("##atto_tabs")) {
         for (int i = 0; i < (int)tabs_.size(); i++) {
-            std::string label = tabs_[i].tab_name;
-            if (tabs_[i].dirty) label += "*";
+            std::string label = tabs_[i].use_editor2
+                ? tabs_[i].editor2.tab_name()
+                : tabs_[i].tab_name;
+            bool tab_dirty = tabs_[i].use_editor2
+                ? tabs_[i].editor2.is_dirty()
+                : tabs_[i].dirty;
+            if (tab_dirty) label += "*";
             label += "###tab" + std::to_string(i);
             bool open = true;
             ImGuiTabItemFlags flags = (i == active_tab_) ? ImGuiTabItemFlags_SetSelected : 0;
