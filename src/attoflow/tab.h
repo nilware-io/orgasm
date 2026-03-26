@@ -1,14 +1,21 @@
 #pragma once
 #include "editor_pane.h"
+#include "atto_editor_shared_state.h"
+#include "atto/graph_builder.h"
 #include <memory>
 #include <string>
 
 struct TabState {
+    std::shared_ptr<GraphBuilder> gb;
+    std::shared_ptr<AttoEditorSharedState> shared;
     std::shared_ptr<IEditorPane> pane;
+    std::string file_path;
+    std::string tab_name;
 
-    // Convenience accessors delegating to pane
-    bool is_loaded() const { return pane && pane->is_loaded(); }
-    bool is_dirty() const { return pane && pane->is_dirty(); }
-    const std::string& file_path() const { return pane->file_path(); }
-    const std::string& tab_name() const { return pane->tab_name(); }
+    std::string label() const {
+        std::string l = tab_name;
+        if (pane) l += std::string("[") + pane->type_name() + "]";
+        if (gb && gb->is_dirty()) l += "*";
+        return l;
+    }
 };

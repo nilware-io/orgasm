@@ -1,4 +1,5 @@
 #include "window.h"
+#include "atto/graph_builder.h"
 #include "atto/args.h"
 #include "atto/serial.h"
 #include <cmath>
@@ -32,7 +33,10 @@ bool FlowEditorWindow::init(const std::string& project_dir) {
 
     if (tabs_.empty()) {
         TabState tab;
-        tab.pane = std::make_shared<Editor2Pane>();
+        tab.tab_name = "untitled";
+        tab.gb = std::make_shared<GraphBuilder>();
+        tab.shared = std::make_shared<AttoEditorSharedState>();
+        tab.pane = make_editor2(tab.gb, tab.shared);
         tabs_.push_back(std::move(tab));
     }
 
@@ -57,25 +61,33 @@ void FlowEditorWindow::open_tab(const std::string& file_path) {
 
     // Check if already open
     for (int i = 0; i < (int)tabs_.size(); i++) {
-        if (tabs_[i].pane && tabs_[i].file_path() == abs_path) {
+        if (tabs_[i].file_path == abs_path) {
             active_tab_ = i;
             return;
         }
     }
 
-    // Try Editor2Pane first
-    auto editor2 = std::make_shared<Editor2Pane>();
-    std::shared_ptr<IEditorPane> pane;
+    TabState tab;
+    tab.file_path = abs_path;
+    tab.tab_name = fs::path(file_path).stem().string();
 
+    // Parse file into GraphBuilder
     if (fs::exists(abs_path)) {
-        if (!editor2->load(abs_path)) {
-            throw std::invalid_argument("Cannot load " + abs_path);
+        std::ifstream f(abs_path);
+        if (f.is_open()) {
+            auto result = Deserializer::parse_atto(f);
+            if (auto* gb = std::get_if<std::shared_ptr<GraphBuilder>>(&result)) {
+                tab.gb = *gb;
+            } else {
+                auto* err = std::get_if<BuilderError>(&result);
+                fprintf(stderr, "Window: %s\n", err ? err->c_str() : "unknown error");
+            }
         }
     }
-    pane = editor2;
+    if (!tab.gb) tab.gb = std::make_shared<GraphBuilder>();
+    tab.shared = std::make_shared<AttoEditorSharedState>();
+    tab.pane = make_editor2(tab.gb, tab.shared);
 
-    TabState tab;
-    tab.pane = pane;
     tabs_.push_back(std::move(tab));
     active_tab_ = (int)tabs_.size() - 1;
 }
@@ -96,7 +108,10 @@ void FlowEditorWindow::close_tab(int idx) {
         active_tab_ = std::max(0, (int)tabs_.size() - 1);
     if (tabs_.empty()) {
         TabState tab;
-        tab.pane = std::make_shared<Editor2Pane>();
+        tab.tab_name = "untitled";
+        tab.gb = std::make_shared<GraphBuilder>();
+        tab.shared = std::make_shared<AttoEditorSharedState>();
+        tab.pane = make_editor2(tab.gb, tab.shared);
         tabs_.push_back(std::move(tab));
     }
 }
@@ -148,7 +163,7 @@ void FlowEditorWindow::draw() {
         namespace fs = std::filesystem;
         std::string stem = fs::path(fname).stem().string();
         bool is_active = (active_tab_ < (int)tabs_.size() &&
-                          tabs_[active_tab_].tab_name() == stem);
+                          tabs_[active_tab_].tab_name == stem);
         if (is_active) ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(100, 200, 255, 255));
         if (ImGui::Selectable(stem.c_str(), is_active)) {
             std::string full_path = (fs::path(project_dir_) / fname).string();
@@ -174,8 +189,7 @@ void FlowEditorWindow::draw() {
     // --- Tab bar ---
     if (ImGui::BeginTabBar("##atto_tabs")) {
         for (int i = 0; i < (int)tabs_.size(); i++) {
-            std::string label = tabs_[i].tab_name();
-            if (tabs_[i].is_dirty()) label += "*";
+            std::string label = tabs_[i].label();
             label += "###tab" + std::to_string(i);
             bool open = true;
             ImGuiTabItemFlags flags = (i == active_tab_) ? ImGuiTabItemFlags_SetSelected : 0;
@@ -419,8 +433,8 @@ void FlowEditorWindow::run_program(bool release) {
     }
 #endif
 
-    std::string active_path = active().pane ? active().file_path() : "";
-    if (active_path.empty()) return;
+    if (active().file_path.empty()) return;
+    std::string active_path = active().file_path;
 
     namespace fs = std::filesystem;
 
