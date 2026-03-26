@@ -638,10 +638,12 @@ void Editor2Pane::draw_node(ImDrawList* dl, const FlowNodeBuilderPtr& node,
     if (auto* ep = std::get_if<BuilderEntryPtr>(&hover_item_))
         node_hovered = (*ep == node);
 
-    // pin_hovered_on_this_node = hover_item_ is a pin belonging to this node
+    // pin_hovered_on_this_node = hover_item_ is a pin or +diamond belonging to this node
     bool pin_hovered_on_this = false;
     if (auto* pin = std::get_if<FlowArg2Ptr>(&hover_item_))
         pin_hovered_on_this = ((*pin)->node() == node);
+    else if (auto* add = std::get_if<AddPinHover>(&hover_item_))
+        pin_hovered_on_this = (add->node == node);
     bool has_error = !node->error.empty();
 
     ImU32 col = has_error ? S.col_node_err : (selected ? S.col_node_sel : S.col_node);
@@ -791,6 +793,26 @@ void Editor2Pane::draw_node(ImDrawList* dl, const FlowNodeBuilderPtr& node,
     FlowArg2Ptr hovered_pin = nullptr;
     if (auto* pp = std::get_if<FlowArg2Ptr>(&hover_item_))
         hovered_pin = *pp;
+
+    // Check if +diamond is hovered
+    if (auto* add_hover = std::get_if<AddPinHover>(&hover_item_)) {
+        if (add_hover->node == node) {
+            // Find the +diamond position and highlight it
+            for (int i = 0; i < pm.total(); i++) {
+                if (pm.is_add_diamond(i)) {
+                    ImVec2 pp = layout.input_pin_pos(i);
+                    draw_highlight(pp, PinShape2::Diamond);
+                    if (draw_tooltips_) {
+                        ImGui::BeginTooltip();
+                        ImGui::SetWindowFontScale(S.tooltip_scale);
+                        ImGui::Text("add %s", add_hover->va_port ? add_hover->va_port->name : "arg");
+                        ImGui::EndTooltip();
+                    }
+                    return;
+                }
+            }
+        }
+    }
 
     if (hovered_pin) {
         // Find which visual pin matches and highlight it
@@ -987,10 +1009,15 @@ Editor2Pane::HoverItem Editor2Pane::detect_hover(
         float pin_thresh = S.pin_radius * canvas_zoom_ * S.pin_hit_radius_mul;
         auto pm = PinMapping::build(node, nt);
 
-        // Input pins
+        // Input pins (including +diamond)
         for (int i = 0; i < pm.total(); i++) {
-            if (pm.is_add_diamond(i) || pm.is_absent_optional(i)) continue;
+            if (pm.is_absent_optional(i)) continue;
             float pd = d2(mouse, layout.input_pin_pos(i));
+            if (pm.is_add_diamond(i)) {
+                if (pd < pin_thresh && nt->input_ports_va_args)
+                    try_candidate(pd - pin_bias, AddPinHover{node, nt->input_ports_va_args, true});
+                continue;
+            }
             if (pd < pin_thresh) {
                 FlowArg2Ptr pin_arg = nullptr;
                 if (pm.is_base(i)) {

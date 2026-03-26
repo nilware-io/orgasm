@@ -31,8 +31,13 @@ private:
     float canvas_zoom_ = 1.0f;
 
     // Interaction state
-    using HoverItem = std::variant<std::monostate, BuilderEntryPtr, FlowArg2Ptr>;
-    HoverItem hover_item_;              // monostate = nothing, BuilderEntryPtr = node/net, FlowArg2Ptr = pin
+    struct AddPinHover {
+        FlowNodeBuilderPtr node;
+        const PortDesc2* va_port;       // the va_args port descriptor template
+        bool is_input;                  // true = input +diamond, false = output +diamond (future)
+    };
+    using HoverItem = std::variant<std::monostate, BuilderEntryPtr, FlowArg2Ptr, AddPinHover>;
+    HoverItem hover_item_;              // monostate=nothing, BuilderEntryPtr=node/net, FlowArg2Ptr=pin, AddPinHover=+diamond
     bool draw_tooltips_ = true;
     std::set<FlowNodeBuilderPtr> selected_nodes_;
     bool dragging_started_ = false;
