@@ -170,6 +170,7 @@ static const PortDesc2 P2_DECL_VAR_IN[] = {
     {"bang_in", "trigger", PortKind2::BangTrigger},
     {"name", "variable name (symbol)"},
     {"type", "variable type"},
+    {"initial", "variable initial value", PortKind2::Data, nullptr, true},
 };
 static const PortDesc2 P2_DECL_VAR_OUT[] = {
     {"next", "fires after declaration", PortKind2::BangNext},
@@ -255,7 +256,7 @@ static const NodeType2 NODE_TYPES2[] = {
 
     // decl_var
     {NodeTypeID::DeclVar,       "decl_var",   "Declare a variable",
-     P2_DECL_VAR_IN, 3, P2_DECL_VAR_OUT, 2, NodeKind2::Declaration},
+     P2_DECL_VAR_IN, 4, P2_DECL_VAR_OUT, 2, NodeKind2::Declaration},
 
     // decl
     {NodeTypeID::Decl,          "decl",       "Compile-time entry point",
