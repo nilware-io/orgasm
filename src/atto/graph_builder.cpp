@@ -343,6 +343,11 @@ std::pair<NodeId, BuilderEntryPtr> GraphBuilder::find_or_create_net(const NodeId
     return {entries.find(name)->first, net};
 }
 
+BuilderEntryPtr GraphBuilder::find_or_null_node(const NodeId& id) {
+    auto it = entries.find(id);
+    return (it != entries.end()) ? it->second : nullptr;
+}
+
 BuilderEntryPtr GraphBuilder::find(const NodeId& id) {
     if (id == "$unconnected" || id == "$empty")
         throw std::logic_error("find: use unconnected_net()/empty_node() for sentinel '" + id + "'");
@@ -874,7 +879,7 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
                 auto an = a->as_net();
                 if (!an) continue;
                 if (!an->second() || !an->second()->as_Net()) continue;
-                auto actual = gb->find(an->first());
+                auto actual = gb->find_or_null_node(an->first());
                 if (actual && actual->as_Node())
                     an->entry(actual);
             }

@@ -284,6 +284,8 @@ struct GraphBuilder : std::enable_shared_from_this<GraphBuilder> {
 
     std::pair<NodeId, BuilderEntryPtr> find_or_create_net(const NodeId& name, bool for_source = false);
 
+    
+    BuilderEntryPtr find_or_null_node(const NodeId& id);
     BuilderEntryPtr find(const NodeId& id);
 
     FlowNodeBuilderPtr find_node(const NodeId& id);

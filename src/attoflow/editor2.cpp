@@ -111,7 +111,7 @@ struct PinMapping {
         // Base args: track which parsed_args indices are ArgNet2
         if (node->parsed_args) {
             for (int i = 0; i < parsed_size; i++) {
-                if (std::holds_alternative<ArgNet2>((*node->parsed_args)[i])) {
+                if ((*node->parsed_args)[i]->is(ArgKind::Net)) {
                     m.pin_to_port.push_back(i);
                     m.base_count++;
                 }
@@ -129,7 +129,7 @@ struct PinMapping {
         // Va_args
         if (node->parsed_va_args) {
             for (int i = 0; i < (int)node->parsed_va_args->size(); i++) {
-                if (std::holds_alternative<ArgNet2>((*node->parsed_va_args)[i])) {
+                if ((*node->parsed_va_args)[i]->is(ArgKind::Net)) {
                     m.pin_to_port.push_back(-(i + 1)); // negative = va_args index (1-based)
                     m.va_count++;
                 }
@@ -315,7 +315,8 @@ void Editor2Pane::draw() {
                 if (!src_node) return;
                 named = !net->auto_wire();
                 for (int k = 0; k < (int)src_node->outputs.size(); k++) {
-                    if (src_node->outputs[k].second() == entry) {
+                    auto out_net = src_node->outputs[k]->as_net();
+                    if (out_net && out_net->second() == entry) {
                         source_pin = k;
                         break;
                     }
@@ -386,19 +387,21 @@ void Editor2Pane::draw() {
             if (dst_pm.is_base(i)) {
                 int port = dst_pm.port_index(i);
                 if (dst_node->parsed_args && port < (int)dst_node->parsed_args->size()) {
-                    if (auto* an = std::get_if<ArgNet2>(&(*dst_node->parsed_args)[port]))
+                    if (auto an = (*dst_node->parsed_args)[port]->as_net())
                         draw_wire_to_pin(i, an->second(), an->first());
                 }
             } else if (dst_pm.is_va(i)) {
                 int va_idx = -(dst_pm.port_index(i) + 1);
                 if (dst_node->parsed_va_args && va_idx < (int)dst_node->parsed_va_args->size()) {
-                    if (auto* an = std::get_if<ArgNet2>(&(*dst_node->parsed_va_args)[va_idx]))
+                    if (auto an = (*dst_node->parsed_va_args)[va_idx]->as_net())
                         draw_wire_to_pin(i, an->second(), an->first());
                 }
             } else if (dst_pm.is_remap(i)) {
                 int ri = dst_pm.remap_index(i);
-                if (ri < (int)dst_node->remaps.size())
-                    draw_wire_to_pin(i, dst_node->remaps[ri].second(), dst_node->remaps[ri].first());
+                if (ri < (int)dst_node->remaps.size()) {
+                    if (auto an = dst_node->remaps[ri]->as_net())
+                        draw_wire_to_pin(i, an->second(), an->first());
+                }
             }
         }
     }
@@ -581,9 +584,9 @@ void Editor2Pane::draw_node(ImDrawList* dl, const FlowNodeBuilderPtr& node,
         // Display first arg without quotes
         std::string display;
         if (node->parsed_args && !node->parsed_args->empty()) {
-            auto& a = (*node->parsed_args)[0];
-            if (auto* s = std::get_if<ArgString2>(&a)) display = s->value();
-            else if (auto* e = std::get_if<ArgExpr2>(&a)) display = e->expr();
+            auto a = (*node->parsed_args)[0];
+            if (auto s = a->as_string()) display = s->value();
+            else if (auto e = a->as_expr()) display = e->expr();
             else display = node->args_str();
         }
 
@@ -856,38 +859,30 @@ void Editor2Pane::draw_node(ImDrawList* dl, const FlowNodeBuilderPtr& node,
         ImGui::BeginTooltip();
         ImGui::SetWindowFontScale(S.tooltip_scale);
         ImGui::Text("id: %s", node->id().c_str());
-        if (node->parsed_args) {
-            ImGui::Text("parsed_args (%d):", (int)node->parsed_args->size());
-            for (int i = 0; i < (int)node->parsed_args->size(); i++) {
-                auto& a = (*node->parsed_args)[i];
-                if (auto* n = std::get_if<ArgNet2>(&a))
+        auto show_args = [](const char* label, const ParsedArgs2* pa) {
+            if (!pa) return;
+            ImGui::Text("%s (%d):", label, pa->size());
+            for (int i = 0; i < pa->size(); i++) {
+                auto a = (*pa)[i];
+                if (auto n = a->as_net())
                     ImGui::Text("  [%d] net: %s", i, n->first().c_str());
-                else if (auto* e = std::get_if<ArgExpr2>(&a))
+                else if (auto e = a->as_expr())
                     ImGui::Text("  [%d] expr: %s", i, e->expr().c_str());
-                else if (auto* s = std::get_if<ArgString2>(&a))
+                else if (auto s = a->as_string())
                     ImGui::Text("  [%d] str: %s", i, s->value().c_str());
-                else if (auto* v = std::get_if<ArgNumber2>(&a))
+                else if (auto v = a->as_number())
                     ImGui::Text("  [%d] num: %g", i, v->value());
             }
-        }
-        if (node->parsed_va_args && !node->parsed_va_args->empty()) {
-            ImGui::Text("parsed_va_args (%d):", (int)node->parsed_va_args->size());
-            for (int i = 0; i < (int)node->parsed_va_args->size(); i++) {
-                auto& a = (*node->parsed_va_args)[i];
-                if (auto* n = std::get_if<ArgNet2>(&a))
-                    ImGui::Text("  [%d] net: %s", i, n->first().c_str());
-                else if (auto* e = std::get_if<ArgExpr2>(&a))
-                    ImGui::Text("  [%d] expr: %s", i, e->expr().c_str());
-                else if (auto* s = std::get_if<ArgString2>(&a))
-                    ImGui::Text("  [%d] str: %s", i, s->value().c_str());
-                else if (auto* v = std::get_if<ArgNumber2>(&a))
-                    ImGui::Text("  [%d] num: %g", i, v->value());
-            }
-        }
+        };
+        show_args("parsed_args", node->parsed_args.get());
+        if (node->parsed_va_args && !node->parsed_va_args->empty())
+            show_args("parsed_va_args", node->parsed_va_args.get());
         if (!node->remaps.empty()) {
             ImGui::Text("remaps (%d):", (int)node->remaps.size());
-            for (int i = 0; i < (int)node->remaps.size(); i++)
-                ImGui::Text("  $%d -> %s", i, node->remaps[i].first().c_str());
+            for (int i = 0; i < (int)node->remaps.size(); i++) {
+                if (auto n = node->remaps[i]->as_net())
+                    ImGui::Text("  $%d -> %s", i, n->first().c_str());
+            }
         }
         ImGui::EndTooltip();
     }
