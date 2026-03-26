@@ -76,6 +76,7 @@ if(ATTOLANG_BUILD_EDITOR)
         src/attoflow/main.cpp
         src/attoflow/window.cpp
         src/attoflow/editor2.cpp
+        src/attoflow/nets_editor.cpp
         src/attoflow/visual_editor.cpp
         src/attoflow/node_renderer.cpp
         src/attoflow/tooltip_renderer.cpp

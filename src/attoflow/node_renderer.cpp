@@ -1,7 +1,30 @@
 #include "node_renderer.h"
+#include "atto_editor_shared_state.h"
 #include "tooltip_renderer.h"
 #include <cmath>
 #include <algorithm>
+
+// ─── build_render_state ───
+
+NodeRenderState build_render_state(const FlowNodeBuilderPtr& node,
+                                    const HoverItem& hover_item,
+                                    const AttoEditorSharedState* shared) {
+    NodeRenderState state;
+    state.selected = shared && shared->selected_nodes.count(node) > 0;
+    state.node_hovered = false;
+    if (auto* ep = std::get_if<BuilderEntryPtr>(&hover_item))
+        state.node_hovered = (*ep == node);
+    state.pin_hovered_on_this = false;
+    if (auto* pin = std::get_if<FlowArg2Ptr>(&hover_item))
+        state.pin_hovered_on_this = ((*pin)->node() == node);
+    else if (auto* add = std::get_if<AddPinHover>(&hover_item))
+        state.pin_hovered_on_this = (add->node == node);
+    state.hovered_pin = nullptr;
+    if (auto* pp = std::get_if<FlowArg2Ptr>(&hover_item))
+        state.hovered_pin = *pp;
+    state.add_pin_hover = std::get_if<AddPinHover>(&hover_item);
+    return state;
+}
 
 // ─── Geometry helpers ───
 

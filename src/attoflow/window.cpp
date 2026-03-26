@@ -31,15 +31,6 @@ bool FlowEditorWindow::init(const std::string& project_dir) {
         }
     }
 
-    if (tabs_.empty()) {
-        TabState tab;
-        tab.tab_name = "untitled";
-        tab.gb = std::make_shared<GraphBuilder>();
-        tab.shared = std::make_shared<AttoEditorSharedState>();
-        tab.pane = make_editor2(tab.gb, tab.shared);
-        tabs_.push_back(std::move(tab));
-    }
-
     return true;
 }
 
@@ -59,10 +50,11 @@ void FlowEditorWindow::open_tab(const std::string& file_path) {
     namespace fs = std::filesystem;
     std::string abs_path = fs::absolute(file_path).string();
 
-    // Check if already open
+    // Check if already open (match on file_path + graph editor type)
     for (int i = 0; i < (int)tabs_.size(); i++) {
-        if (tabs_[i].file_path == abs_path) {
-            active_tab_ = i;
+        if (tabs_[i].file_path == abs_path && tabs_[i].pane &&
+            std::string(tabs_[i].pane->type_name()) == "graph") {
+            pending_tab_select_ = i;
             return;
         }
     }
@@ -88,8 +80,17 @@ void FlowEditorWindow::open_tab(const std::string& file_path) {
     tab.shared = std::make_shared<AttoEditorSharedState>();
     tab.pane = make_editor2(tab.gb, tab.shared);
 
+    // Create nets editor tab sharing the same graph + state
+    TabState nets_tab;
+    nets_tab.file_path = abs_path;
+    nets_tab.tab_name = tab.tab_name;
+    nets_tab.gb = tab.gb;
+    nets_tab.shared = tab.shared;
+    nets_tab.pane = make_nets_editor(nets_tab.gb, nets_tab.shared);
+
     tabs_.push_back(std::move(tab));
-    active_tab_ = (int)tabs_.size() - 1;
+    tabs_.push_back(std::move(nets_tab));
+    pending_tab_select_ = (int)tabs_.size() - 2; // focus on the graph editor tab
 }
 
 void FlowEditorWindow::close_tab(int idx) {
@@ -106,14 +107,6 @@ void FlowEditorWindow::close_tab(int idx) {
     tabs_.erase(tabs_.begin() + idx);
     if (active_tab_ >= (int)tabs_.size())
         active_tab_ = std::max(0, (int)tabs_.size() - 1);
-    if (tabs_.empty()) {
-        TabState tab;
-        tab.tab_name = "untitled";
-        tab.gb = std::make_shared<GraphBuilder>();
-        tab.shared = std::make_shared<AttoEditorSharedState>();
-        tab.pane = make_editor2(tab.gb, tab.shared);
-        tabs_.push_back(std::move(tab));
-    }
 }
 
 void FlowEditorWindow::shutdown() {
@@ -188,15 +181,15 @@ void FlowEditorWindow::draw() {
 
     // --- Tab bar ---
     if (ImGui::BeginTabBar("##atto_tabs")) {
+        int pending_select = pending_tab_select_;
+        pending_tab_select_ = -1;
         for (int i = 0; i < (int)tabs_.size(); i++) {
             std::string label = tabs_[i].label();
             label += "###tab" + std::to_string(i);
             bool open = true;
-            ImGuiTabItemFlags flags = (i == active_tab_) ? ImGuiTabItemFlags_SetSelected : 0;
+            ImGuiTabItemFlags flags = (i == pending_select) ? ImGuiTabItemFlags_SetSelected : 0;
             if (ImGui::BeginTabItem(label.c_str(), &open, flags)) {
-                if (active_tab_ != i) {
-                    active_tab_ = i;
-                }
+                active_tab_ = i;
                 ImGui::EndTabItem();
             }
             if (!open) {
@@ -215,8 +208,14 @@ void FlowEditorWindow::draw() {
     // --- Canvas ---
     ImGui::BeginChild("##flow_canvas", {canvas_w, canvas_h}, false,
                       ImGuiWindowFlags_NoScrollbar);
-    if (active().pane) {
+    if (!tabs_.empty() && active().pane) {
         active().pane->draw();
+    } else {
+        ImVec2 sz = ImGui::GetContentRegionAvail();
+        const char* msg = "Select a file from the file list to open it.";
+        ImVec2 text_sz = ImGui::CalcTextSize(msg);
+        ImGui::SetCursorPos({(sz.x - text_sz.x) * 0.5f, (sz.y - text_sz.y) * 0.5f});
+        ImGui::TextDisabled("%s", msg);
     }
     ImGui::EndChild();
 

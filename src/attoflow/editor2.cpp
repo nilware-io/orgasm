@@ -194,21 +194,7 @@ void Editor2Pane::draw_content(const CanvasFrame& frame) {
         ned->rebuild(frame.canvas_origin, canvas_zoom_);
 
         auto& node = ned->node;
-        NodeRenderState state;
-        state.selected = shared_ && shared_->selected_nodes.count(node) > 0;
-        state.node_hovered = false;
-        if (auto* ep = std::get_if<BuilderEntryPtr>(&hover_item_))
-            state.node_hovered = (*ep == node);
-        state.pin_hovered_on_this = false;
-        if (auto* pin = std::get_if<FlowArg2Ptr>(&hover_item_))
-            state.pin_hovered_on_this = ((*pin)->node() == node);
-        else if (auto* add = std::get_if<AddPinHover>(&hover_item_))
-            state.pin_hovered_on_this = (add->node == node);
-        state.hovered_pin = nullptr;
-        if (auto* pp = std::get_if<FlowArg2Ptr>(&hover_item_))
-            state.hovered_pin = *pp;
-        state.add_pin_hover = std::get_if<AddPinHover>(&hover_item_);
-
+        auto state = build_render_state(node, hover_item_, shared_.get());
         auto* nt = find_node_type2(node->type_id);
         render_node(frame.dl, node, nt, ned->layout, ned->vpm, ned->display_text,
                     state, canvas_zoom_, draw_tooltips_);

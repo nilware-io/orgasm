@@ -2,6 +2,7 @@
 #include "sdl_imgui_window.h"
 #include "tab.h"
 #include "editor2.h"
+#include "nets_editor.h"
 #include <string>
 #include <vector>
 #include <thread>
@@ -41,6 +42,7 @@ private:
     // Tabs
     std::vector<TabState> tabs_;
     int active_tab_ = 0;
+    int pending_tab_select_ = -1; // one-shot: set to force tab selection next frame
 
     // Panel sizes
     float side_panel_width_ = 200.0f;

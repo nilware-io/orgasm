@@ -96,6 +96,12 @@ struct NodeRenderState {
     const AddPinHover* add_pin_hover; // null if no +diamond hovered
 };
 
+struct AttoEditorSharedState;
+
+NodeRenderState build_render_state(const FlowNodeBuilderPtr& node,
+                                    const HoverItem& hover_item,
+                                    const AttoEditorSharedState* shared);
+
 // ─── Hit-testing ───
 
 struct HitResult {
