@@ -68,17 +68,11 @@ void FlowEditorWindow::open_tab(const std::string& file_path) {
     std::shared_ptr<IEditorPane> pane;
 
     if (fs::exists(abs_path)) {
-        if (editor2->load(abs_path)) {
-            pane = editor2;
-        } else {
-            // Fallback to legacy Editor1Pane
-            auto editor1 = std::make_shared<Editor1Pane>();
-            editor1->load(abs_path);
-            pane = editor1;
+        if (!editor2->load(abs_path)) {
+            throw std::invalid_argument("Cannot load " + abs_path);
         }
-    } else {
-        pane = editor2;
     }
+    pane = editor2;
 
     TabState tab;
     tab.pane = pane;
@@ -88,6 +82,7 @@ void FlowEditorWindow::open_tab(const std::string& file_path) {
 
 void FlowEditorWindow::close_tab(int idx) {
     if (idx < 0 || idx >= (int)tabs_.size()) return;
+    #if LEGACY_EDITOR
     // Auto-save before closing (Editor1Pane handles its own save)
     if (auto e1 = std::dynamic_pointer_cast<Editor1Pane>(tabs_[idx].pane)) {
         if (e1->is_dirty() && !e1->file_path().empty()) {
@@ -95,6 +90,7 @@ void FlowEditorWindow::close_tab(int idx) {
             e1->auto_save();
         }
     }
+    #endif
     tabs_.erase(tabs_.begin() + idx);
     if (active_tab_ >= (int)tabs_.size())
         active_tab_ = std::max(0, (int)tabs_.size() - 1);
@@ -218,10 +214,11 @@ void FlowEditorWindow::draw() {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
 
     // --- Bottom panel ---
-    auto* e1 = dynamic_cast<Editor1Pane*>(active().pane.get());
+    // auto* e1 = dynamic_cast<Editor1Pane*>(active().pane.get());
     ImGui::BeginChild("##bottom_panel", {canvas_w, bottom_panel_height_}, true,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     if (ImGui::BeginTabBar("##bottom_tabs")) {
+#if LEGACY_EDITOR
         if (e1) {
             int error_count = 0;
             for (auto& node : e1->graph().nodes) if (!node.error.empty()) error_count++;
@@ -261,6 +258,7 @@ void FlowEditorWindow::draw() {
                 ImGui::EndTabItem();
             }
         }
+#endif
 
         if (ImGui::BeginTabItem("Build Log", nullptr, show_build_log_ ? ImGuiTabItemFlags_SetSelected : 0)) {
             show_build_log_ = false;
@@ -297,6 +295,7 @@ void FlowEditorWindow::draw() {
 
     // --- Side panel: declarations ---
     ImGui::BeginChild("##side_panel", {side_panel_width_, total_h}, true);
+#if LEGACY_EDITOR
     if (e1) {
         ImGui::TextUnformatted("Declarations");
         ImGui::Separator();
@@ -335,12 +334,15 @@ void FlowEditorWindow::draw() {
             }
         }
     }
+#endif
     ImGui::EndChild();
 
     ImGui::End(); // main
 
+#if LEGACY_EDITOR
     // Check debounced save for Editor1Pane
     if (e1) e1->check_debounced_save();
+#endif
 
     win_.end_frame(30, 30, 40);
 }
@@ -371,6 +373,7 @@ void FlowEditorWindow::draw_toolbar() {
     ImGui::SetNextItemWidth(120);
     if (ImGui::InputTextWithHint("##search", "Find node...", search_buf_, sizeof(search_buf_),
                                   ImGuiInputTextFlags_EnterReturnsTrue)) {
+    #if LEGACY_EDITOR
         if (auto* e1 = dynamic_cast<Editor1Pane*>(active().pane.get())) {
             std::string query(search_buf_);
             if (!query.empty()) {
@@ -384,6 +387,7 @@ void FlowEditorWindow::draw_toolbar() {
                 }
             }
         }
+    #endif
     }
 
     ImGui::SameLine();
@@ -408,10 +412,12 @@ void FlowEditorWindow::run_program(bool release) {
         build_log_.clear();
     }
 
+#if LEGACY_EDITOR
     // Auto-save via Editor1Pane if applicable
     if (auto* e1 = dynamic_cast<Editor1Pane*>(active().pane.get())) {
         e1->auto_save();
     }
+#endif
 
     std::string active_path = active().pane ? active().file_path() : "";
     if (active_path.empty()) return;

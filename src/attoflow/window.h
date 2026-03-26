@@ -1,7 +1,6 @@
 #pragma once
 #include "sdl_imgui_window.h"
 #include "tab.h"
-#include "editor1.h"
 #include "editor2.h"
 #include <string>
 #include <vector>
