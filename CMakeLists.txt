@@ -57,6 +57,21 @@ if(ATTOLANG_BUILD_EDITOR)
     set(ATTO_NEEDS_IMGUI ON)
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/AttoDeps.cmake)
 
+    # Embed Liberation Mono font as C array
+    set(FONT_TTF "${CMAKE_CURRENT_SOURCE_DIR}/src/attoflow/fonts/LiberationMono-Regular.ttf")
+    set(FONT_HDR "${CMAKE_CURRENT_BINARY_DIR}/generated/LiberationMono_Regular.h")
+    file(READ "${FONT_TTF}" FONT_HEX HEX)
+    string(LENGTH "${FONT_HEX}" FONT_HEX_LEN)
+    math(EXPR FONT_SIZE "${FONT_HEX_LEN} / 2")
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," FONT_BYTES "${FONT_HEX}")
+    file(WRITE "${FONT_HDR}"
+        "// Liberation Mono Regular - SIL Open Font License (auto-generated)\n"
+        "#pragma once\n"
+        "static const unsigned int LiberationMono_Regular_size = ${FONT_SIZE};\n"
+        "static const unsigned char LiberationMono_Regular_data[] = {\n"
+        "${FONT_BYTES}\n};\n"
+    )
+
     add_executable(attoflow
         src/attoflow/main.cpp
         src/attoflow/editor.cpp
@@ -65,6 +80,7 @@ if(ATTOLANG_BUILD_EDITOR)
     target_include_directories(attoflow PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/attoflow
+        ${CMAKE_CURRENT_BINARY_DIR}/generated
     )
     if(WIN32)
         target_link_libraries(attoflow PRIVATE attolang SDL3::SDL3 imgui::imgui)
