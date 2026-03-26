@@ -18,6 +18,13 @@ struct PortDesc2 {
     bool optional = false;
 };
 
+enum class NodeKind2 : uint8_t {
+    Flow,         // dataflow node — side-bang (right-middle)
+    Banged,       // bang trigger input (top) + bang next output (bottom)
+    Event,        // event source — bang next output (bottom), no bang input
+    Declaration,  // compile-time — bang trigger input (top) + bang next output (bottom)
+};
+
 struct NodeType2 {
     NodeTypeID type_id;
     const char* name;
@@ -26,9 +33,13 @@ struct NodeType2 {
     int num_inputs;
     const PortDesc2* output_ports;
     int num_outputs;
-    bool is_event = false;
-    bool is_declaration = false;
+    NodeKind2 kind = NodeKind2::Flow;
     const PortDesc2* va_args = nullptr;  // nullptr = no va_args, else template for repeating pins
+
+    bool is_banged() const { return kind == NodeKind2::Banged || kind == NodeKind2::Event || kind == NodeKind2::Declaration; }
+    bool is_declaration() const { return kind == NodeKind2::Declaration; }
+    bool is_flow() const { return kind == NodeKind2::Flow; }
+    bool is_event() const { return kind == NodeKind2::Event; }
 };
 
 // ─── Port descriptor arrays ───
@@ -197,18 +208,6 @@ static const PortDesc2 P2_RESIZE_IN[] = {
     {"size", "new size", PortKind2::Data, "s32"},
 };
 
-// on_key outputs: next + data
-static const PortDesc2 P2_KEY_OUT[] = {
-    {"next", "fires on key event", PortKind2::BangNext},
-    {"midi_key", "MIDI note number", PortKind2::Data, "u8"},
-    {"freq", "frequency in Hz", PortKind2::Data, "f32"},
-};
-// on_key_up outputs: next + midi_key only
-static const PortDesc2 P2_KEY_UP_OUT[] = {
-    {"next", "fires on key release", PortKind2::BangNext},
-    {"midi_key", "MIDI note number", PortKind2::Data, "u8"},
-    {"freq", "frequency in Hz", PortKind2::Data, "f32"},
-};
 
 // event! outputs
 static const PortDesc2 P2_EVENT_OUT[] = {{"next", "fires on event", PortKind2::BangNext}};
@@ -218,155 +217,155 @@ static const PortDesc2 P2_EVENT_OUT[] = {{"next", "fires on event", PortKind2::B
 static const NodeType2 NODE_TYPES2[] = {
     // expr: no fixed inputs, outputs = args count
     {NodeTypeID::Expr,          "expr",       "Evaluate expression",
-     nullptr, 0, P2_RESULT, 1, false, false},
+     nullptr, 0, P2_RESULT, 1},
 
     // select: 3 fixed inputs, 1 output
     {NodeTypeID::Select,        "select",     "Select value by condition",
-     P2_SELECT_IN, 3, P2_RESULT, 1, false, false},
+     P2_SELECT_IN, 3, P2_RESULT, 1},
 
     // new: type fixed input + va_args fields, 1 output
     {NodeTypeID::New,           "new",        "Instantiate a type",
-     P2_NEW_IN, 1, P2_RESULT, 1, false, false, &P2_VA_FIELD},
+     P2_NEW_IN, 1, P2_RESULT, 1, NodeKind2::Flow, &P2_VA_FIELD},
 
     // dup: 1 input, 1 output
     {NodeTypeID::Dup,           "dup",        "Duplicate input to output",
-     P2_VALUE, 1, P2_RESULT, 1, false, false},
+     P2_VALUE, 1, P2_RESULT, 1},
 
     // str: 1 input, 1 output
     {NodeTypeID::Str,           "str",        "Convert to string",
-     P2_VALUE, 1, P2_RESULT, 1, false, false},
+     P2_VALUE, 1, P2_RESULT, 1},
 
     // void: no inputs, 1 output
     {NodeTypeID::Void,          "void",       "Void result",
-     nullptr, 0, P2_RESULT, 1, false, false},
+     nullptr, 0, P2_RESULT, 1},
 
     // discard!: bang + value, next output
     {NodeTypeID::DiscardBang,   "discard!",   "Discard value, pass bang",
-     P2_DISCARD_BANG_IN, 2, P2_NEXT, 1, false, false},
+     P2_DISCARD_BANG_IN, 2, P2_NEXT, 1, NodeKind2::Banged},
 
     // discard: 1 input, no outputs
     {NodeTypeID::Discard,       "discard",    "Discard input values",
-     P2_VALUE, 1, nullptr, 0, false, false},
+     P2_VALUE, 1, nullptr, 0},
 
     // decl_type
     {NodeTypeID::DeclType,      "decl_type",  "Declare a type",
-     P2_DECL_TYPE_IN, 3, P2_DECL_TYPE_OUT, 2, false, true},
+     P2_DECL_TYPE_IN, 3, P2_DECL_TYPE_OUT, 2, NodeKind2::Declaration},
 
     // decl_var
     {NodeTypeID::DeclVar,       "decl_var",   "Declare a variable",
-     P2_DECL_VAR_IN, 3, P2_DECL_VAR_OUT, 2, false, true},
+     P2_DECL_VAR_IN, 3, P2_DECL_VAR_OUT, 2, NodeKind2::Declaration},
 
     // decl
     {NodeTypeID::Decl,          "decl",       "Compile-time entry point",
-     nullptr, 0, P2_DECL_OUT, 1, false, true},
+     nullptr, 0, P2_DECL_OUT, 1, NodeKind2::Declaration},
 
     // decl_event
     {NodeTypeID::DeclEvent,     "decl_event", "Declare event",
-     P2_DECL_EVENT_IN, 3, P2_NEXT, 1, false, true},
+     P2_DECL_EVENT_IN, 3, P2_NEXT, 1, NodeKind2::Declaration},
 
     // decl_import
     {NodeTypeID::DeclImport,    "decl_import","Import module",
-     P2_DECL_IMPORT_IN, 2, P2_NEXT, 1, false, true},
+     P2_DECL_IMPORT_IN, 2, P2_NEXT, 1, NodeKind2::Declaration},
 
     // ffi
     {NodeTypeID::Ffi,           "ffi",        "Declare external function",
-     P2_FFI_IN, 3, P2_NEXT, 1, false, true},
+     P2_FFI_IN, 3, P2_NEXT, 1, NodeKind2::Declaration},
 
     // call: fn fixed input + va_args, 1 output
     {NodeTypeID::Call,          "call",       "Call function",
-     P2_CALL_IN, 1, P2_RESULT, 1, false, false, &P2_VA_ARG},
+     P2_CALL_IN, 1, P2_RESULT, 1, NodeKind2::Flow, &P2_VA_ARG},
 
     // call!: bang + fn fixed input + va_args, next + result
     {NodeTypeID::CallBang,      "call!",      "Call function (bang)",
-     P2_CALL_BANG_IN, 2, P2_NEXT_RESULT, 2, false, false, &P2_VA_ARG},
+     P2_CALL_BANG_IN, 2, P2_NEXT_RESULT, 2, NodeKind2::Banged, &P2_VA_ARG},
 
     // erase: 2 inputs, 1 output
     {NodeTypeID::Erase,         "erase",      "Erase from collection",
-     P2_ERASE_IN, 2, P2_RESULT, 1, false, false},
+     P2_ERASE_IN, 2, P2_RESULT, 1},
 
     // output_mix!
     {NodeTypeID::OutputMixBang, "output_mix!","Mix into audio output",
-     P2_OUTPUT_MIX_IN, 2, nullptr, 0, false, false},
+     P2_OUTPUT_MIX_IN, 2, nullptr, 0, NodeKind2::Banged},
 
     // append: 2 inputs, 1 output
     {NodeTypeID::Append,        "append",     "Append to collection",
-     P2_APPEND_IN, 2, P2_RESULT, 1, false, false},
+     P2_APPEND_IN, 2, P2_RESULT, 1},
 
     // append!: bang + 2 inputs, next + result
     {NodeTypeID::AppendBang,    "append!",    "Append to collection (bang)",
-     P2_APPEND_BANG_IN, 3, P2_NEXT_RESULT, 2, false, false},
+     P2_APPEND_BANG_IN, 3, P2_NEXT_RESULT, 2, NodeKind2::Banged},
 
     // store: 2 inputs, no outputs
     {NodeTypeID::Store,         "store",      "Store value",
-     P2_STORE_IN, 2, nullptr, 0, false, false},
+     P2_STORE_IN, 2, nullptr, 0},
 
     // store!: bang + 2 inputs, next
     {NodeTypeID::StoreBang,     "store!",     "Store value (bang)",
-     P2_STORE_BANG_IN, 3, P2_NEXT, 1, false, false},
+     P2_STORE_BANG_IN, 3, P2_NEXT, 1, NodeKind2::Banged},
 
     // event!: no inputs, next output
     {NodeTypeID::EventBang,     "event!",     "Event source",
-     nullptr, 0, P2_EVENT_OUT, 1, true, false},
+     nullptr, 0, P2_EVENT_OUT, 1, NodeKind2::Event},
 
-    // on_key_down!: no inputs, next + 2 data outputs
-    {NodeTypeID::OnKeyDownBang, "on_key_down!","Key press event",
-     nullptr, 0, P2_KEY_OUT, 3, true, false},
+    // on_key_down! — removed
+    {NodeTypeID::OnKeyDownBang, "on_key_down!","(removed)",
+     nullptr, 0, nullptr, 0},
 
-    // on_key_up!: no inputs, next + 2 data outputs
-    {NodeTypeID::OnKeyUpBang,   "on_key_up!", "Key release event",
-     nullptr, 0, P2_KEY_UP_OUT, 3, true, false},
+    // on_key_up! — removed
+    {NodeTypeID::OnKeyUpBang,   "on_key_up!", "(removed)",
+     nullptr, 0, nullptr, 0},
 
     // select!: bang + condition, 3 bang outputs
     {NodeTypeID::SelectBang,    "select!",    "Branch on condition",
-     P2_SELECT_BANG_IN, 2, P2_SELECT_BANG_OUT, 3, false, false},
+     P2_SELECT_BANG_IN, 2, P2_SELECT_BANG_OUT, 3, NodeKind2::Banged},
 
     // expr!: bang input, next + outputs (dynamic)
     {NodeTypeID::ExprBang,      "expr!",      "Evaluate expression on bang",
-     P2_EXPR_BANG_IN, 1, P2_NEXT, 1, false, false},
+     P2_EXPR_BANG_IN, 1, P2_NEXT, 1, NodeKind2::Banged},
 
     // erase!: bang + 2 inputs, next + result
     {NodeTypeID::EraseBang,     "erase!",     "Erase from collection (bang)",
-     P2_ERASE_BANG_IN, 3, P2_NEXT_RESULT, 2, false, false},
+     P2_ERASE_BANG_IN, 3, P2_NEXT_RESULT, 2, NodeKind2::Banged},
 
     // iterate: collection + fn, no outputs
     {NodeTypeID::Iterate,       "iterate",    "Iterate collection",
-     P2_ITERATE_IN, 2, nullptr, 0, false, false},
+     P2_ITERATE_IN, 2, nullptr, 0},
 
     // iterate!: bang + collection + fn, next
     {NodeTypeID::IterateBang,   "iterate!",   "Iterate collection (bang)",
-     P2_ITERATE_BANG_IN, 3, P2_NEXT, 1, false, false},
+     P2_ITERATE_BANG_IN, 3, P2_NEXT, 1, NodeKind2::Banged},
 
     // next: 1 input, 1 output
     {NodeTypeID::Next,          "next",       "Advance iterator",
-     P2_VALUE, 1, P2_RESULT, 1, false, false},
+     P2_VALUE, 1, P2_RESULT, 1},
 
     // lock: mutex + fn fixed inputs + va_args params, no outputs
     {NodeTypeID::Lock,          "lock",       "Execute under mutex lock",
-     P2_LOCK_IN, 2, nullptr, 0, false, false, &P2_VA_PARAM},
+     P2_LOCK_IN, 2, nullptr, 0, NodeKind2::Flow, &P2_VA_PARAM},
 
     // lock!: bang + mutex + fn fixed inputs + va_args params, next
     {NodeTypeID::LockBang,      "lock!",      "Execute under mutex lock (bang)",
-     P2_LOCK_BANG_IN, 3, P2_NEXT, 1, false, false, &P2_VA_PARAM},
+     P2_LOCK_BANG_IN, 3, P2_NEXT, 1, NodeKind2::Banged, &P2_VA_PARAM},
 
     // resize!: bang + target + size, next
     {NodeTypeID::ResizeBang,    "resize!",    "Resize vector",
-     P2_RESIZE_IN, 3, P2_NEXT, 1, false, false},
+     P2_RESIZE_IN, 3, P2_NEXT, 1, NodeKind2::Banged},
 
     // cast: 1 input, 1 output
     {NodeTypeID::Cast,          "cast",       "Cast value to type",
-     P2_VALUE, 1, P2_RESULT, 1, false, false},
+     P2_VALUE, 1, P2_RESULT, 1},
 
     // label: no pins
     {NodeTypeID::Label,         "label",      "Text label",
-     nullptr, 0, nullptr, 0, false, false},
+     nullptr, 0, nullptr, 0},
 
     // deref: 1 input, 1 output
     {NodeTypeID::Deref,         "deref",      "Dereference iterator (internal)",
-     P2_VALUE, 1, P2_RESULT, 1, false, false},
+     P2_VALUE, 1, P2_RESULT, 1},
 
     // error: no pins
     {NodeTypeID::Error,         "error",      "Error: invalid node",
-     nullptr, 0, nullptr, 0, false, false},
+     nullptr, 0, nullptr, 0},
 };
 
 static constexpr int NUM_NODE_TYPES2 = sizeof(NODE_TYPES2) / sizeof(NODE_TYPES2[0]);
