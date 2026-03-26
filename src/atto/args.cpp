@@ -339,4 +339,4 @@ SplitResult split_args(const std::string& args_str) {
     return result;
 }
 
-// (v2 types and functions moved to graphbuilder.h/cpp)
+// (v2 types and functions moved to graph_builder.h/cpp)
