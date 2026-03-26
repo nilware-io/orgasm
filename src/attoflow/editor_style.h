@@ -56,6 +56,9 @@ struct Editor2Style {
     ImU32 col_label_bg;
     ImU32 col_label_text;
 
+    // Interaction
+    float scroll_pan_speed;
+
     // Tooltip
     float tooltip_scale;
 };

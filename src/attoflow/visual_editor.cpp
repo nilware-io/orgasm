@@ -137,7 +137,7 @@ void VisualEditor::draw_canvas(const char* id) {
             bool shift = ImGui::GetIO().KeyShift;
             bool alt = ImGui::GetIO().KeyAlt;
             if (shift || alt) {
-                float pan_speed = 40.0f;
+                float pan_speed = S.scroll_pan_speed;
                 if (shift) canvas_offset_.x += wheel * pan_speed;
                 if (alt)   canvas_offset_.y += wheel * pan_speed;
             } else {

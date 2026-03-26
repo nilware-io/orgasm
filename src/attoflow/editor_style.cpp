@@ -45,6 +45,8 @@ Editor2Style::Editor2Style()
     // Net label colors
     , col_label_bg(IM_COL32(30, 30, 40, 200))
     , col_label_text(IM_COL32(180, 220, 255, 255))
+    // Interaction
+    , scroll_pan_speed(120.0f)
     // Tooltip
     , tooltip_scale(1.0f)
 {
