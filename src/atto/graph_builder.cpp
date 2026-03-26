@@ -112,11 +112,16 @@ std::shared_ptr<ArgExpr2> FlowArg2::as_expr() {
 std::string FlowArg2::name() const {
     std::string prefix = node_->id();
 
-    if (port_) {
-        // TODO: for va_args, append [idx]
-        return prefix + "." + port_->name;
+    if (!is_remap()) {
+        prefix = prefix + "." + port_->name;
+        if (port_->va_args) {
+            return prefix + "[" + std::to_string(input_pin_idx()) + "]";
+        } else {
+            return prefix;
+        }
+    } else {
+        return prefix + ".remaps[" + std::to_string(remap_idx())  + "]";
     }
-    return prefix + ".?";
 }
 
 unsigned FlowArg2::remap_idx() const {

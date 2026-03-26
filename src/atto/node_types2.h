@@ -10,12 +10,19 @@ enum class PortKind2 : uint8_t {
     BangNext,     // bang output (rendered as square)
 };
 
+enum class PortPosition2: uint8_t {
+    Input,
+    Output,
+};
+
 struct PortDesc2 {
     const char* name;
     const char* desc;
     PortKind2 kind = PortKind2::Data;
+    PortPosition2 position = PortPosition2::Input;
     const char* type_name = nullptr;
     bool optional = false;
+    bool va_args = false;
 };
 
 enum class NodeKind2 : uint8_t {
@@ -57,14 +64,14 @@ struct NodeType2 {
 
 // Common outputs
 static const PortDesc2 P2_NEXT[] = {
-    {.name = "next", .desc = "fires after completion", .kind = PortKind2::BangNext},
+    {.name = "next", .desc = "fires after completion", .kind = PortKind2::BangNext, .position = PortPosition2::Output},
 };
 static const PortDesc2 P2_RESULT[] = {
-    {.name = "result", .desc = "result value"},
+    {.name = "result", .desc = "result value", .position = PortPosition2::Output},
 };
 static const PortDesc2 P2_NEXT_RESULT[] = {
-    {.name = "next", .desc = "fires after completion", .kind = PortKind2::BangNext},
-    {.name = "result", .desc = "result value"},
+    {.name = "next", .desc = "fires after completion", .kind = PortKind2::BangNext, .position = PortPosition2::Output},
+    {.name = "result", .desc = "result value", .position = PortPosition2::Output},
 };
 
 // Common inputs
@@ -124,15 +131,15 @@ static const PortDesc2 P2_SELECT_BANG_IN[] = {
     {.name = "condition", .desc = "boolean condition"},
 };
 static const PortDesc2 P2_SELECT_BANG_OUT[] = {
-    {.name = "next", .desc = "fires after branch completes", .kind = PortKind2::BangNext},
-    {.name = "true", .desc = "fires when true", .kind = PortKind2::BangNext},
-    {.name = "false", .desc = "fires when false", .kind = PortKind2::BangNext},
+    {.name = "next", .desc = "fires after branch completes", .kind = PortKind2::BangNext, .position = PortPosition2::Output},
+    {.name = "true", .desc = "fires when true", .kind = PortKind2::BangNext, .position = PortPosition2::Output},
+    {.name = "false", .desc = "fires when false", .kind = PortKind2::BangNext, .position = PortPosition2::Output},
 };
 
 // va_args templates
-static const PortDesc2 P2_VA_FIELD = {.name = "field", .desc = "constructor field"};
-static const PortDesc2 P2_VA_ARG   = {.name = "arg",   .desc = "function argument"};
-static const PortDesc2 P2_VA_PARAM = {.name = "param", .desc = "lambda parameter"};
+static const PortDesc2 P2_VA_FIELD = {.name = "field", .desc = "constructor field", .va_args = true};
+static const PortDesc2 P2_VA_ARG   = {.name = "arg",   .desc = "function argument", .va_args = true};
+static const PortDesc2 P2_VA_PARAM = {.name = "param", .desc = "lambda parameter", .va_args = true};
 
 // new
 static const PortDesc2 P2_NEW_IN[] = {
@@ -177,8 +184,8 @@ static const PortDesc2 P2_DECL_TYPE_IN[] = {
     {.name = "type", .desc = "type definition"},
 };
 static const PortDesc2 P2_DECL_TYPE_OUT[] = {
-    {.name = "next", .desc = "fires after declaration", .kind = PortKind2::BangNext},
-    {.name = "type", .desc = "the declared type"},
+    {.name = "next", .desc = "fires after declaration", .kind = PortKind2::BangNext, .position = PortPosition2::Output},
+    {.name = "type", .desc = "the declared type", .position = PortPosition2::Output},
 };
 static const PortDesc2 P2_DECL_VAR_IN[] = {
     {.name = "bang_in", .desc = "trigger", .kind = PortKind2::BangTrigger},
@@ -189,11 +196,11 @@ static const PortDesc2 P2_DECL_VAR_OPT_IN[] = {
     {.name = "initial", .desc = "variable initial value", .optional = true},
 };
 static const PortDesc2 P2_DECL_VAR_OUT[] = {
-    {.name = "next", .desc = "fires after declaration", .kind = PortKind2::BangNext},
-    {.name = "ref", .desc = "reference to variable"},
+    {.name = "next", .desc = "fires after declaration", .kind = PortKind2::BangNext, .position = PortPosition2::Output},
+    {.name = "ref", .desc = "reference to variable", .position = PortPosition2::Output},
 };
 static const PortDesc2 P2_DECL_OUT[] = {
-    {.name = "next", .desc = "fires to start declarations", .kind = PortKind2::BangNext},
+    {.name = "next", .desc = "fires to start declarations", .kind = PortKind2::BangNext, .position = PortPosition2::Output},
 };
 static const PortDesc2 P2_DECL_EVENT_IN[] = {
     {.name = "bang_in", .desc = "trigger", .kind = PortKind2::BangTrigger},
@@ -231,7 +238,7 @@ static const PortDesc2 P2_RESIZE_IN[] = {
 
 // event!
 static const PortDesc2 P2_EVENT_OUT[] = {
-    {.name = "next", .desc = "fires on event", .kind = PortKind2::BangNext},
+    {.name = "next", .desc = "fires on event", .kind = PortKind2::BangNext, .position = PortPosition2::Output},
 };
 
 // ─── Node type table ───
