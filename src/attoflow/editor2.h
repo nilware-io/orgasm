@@ -35,6 +35,7 @@ private:
     std::set<NodeId> selected_nodes_;
     NodeId dragging_node_;         // node being dragged (empty = none)
     bool dragging_started_ = false;
+    bool drag_was_overlapping_ = false; // true if node was overlapping when drag began
     int editing_link_id_ = -1; // not used yet, placeholder
 
     // Drawing helpers
