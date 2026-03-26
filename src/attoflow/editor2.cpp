@@ -660,12 +660,16 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
     bool pin_hovered = false;
     // Check input pins
     for (int i = 0; i < layout.num_in; i++) {
-        if (pm.is_add_diamond(i)) continue;
         ImVec2 pp = layout.input_pin_pos(i);
         if (dist2(mouse, pp) < hit_r2) {
-            draw_highlight(pp, get_input_pin_shape(i));
+            draw_highlight(pp, pm.is_add_diamond(i) ? PinShape2::Diamond : get_input_pin_shape(i));
             ImGui::BeginTooltip();
-            ImGui::Text("%s", get_input_pin_name(i));
+            if (pm.is_add_diamond(i)) {
+                const char* va_name = nt->va_args ? nt->va_args->name : "arg";
+                ImGui::Text("add %s", va_name);
+            } else {
+                ImGui::Text("%s", get_input_pin_name(i));
+            }
             ImGui::EndTooltip();
             pin_hovered = true;
             break;
