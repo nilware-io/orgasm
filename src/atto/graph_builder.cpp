@@ -379,7 +379,7 @@ BuilderResult Deserializer::parse_node(
         if (args.size() != 1)
             throw std::invalid_argument("Label/Error node requires exactly 1 argument, got " + std::to_string(args.size()));
         nb.parsed_args = std::make_shared<ParsedArgs2>();
-        nb.parsed_args->push_back(std::make_shared<FlowArg2>(ArgString2{args[0]}));
+        nb.parsed_args->push_back(gb->build_arg_string(args[0]));
         return std::pair{id, std::move(nb)};
     }
 
@@ -417,7 +417,7 @@ FlowNodeBuilder& Deserializer::parse_or_error(
     auto entry = std::make_shared<FlowNodeBuilder>(gb);
     entry->type_id = NodeTypeID::Error;
     entry->parsed_args = std::make_shared<ParsedArgs2>();
-    entry->parsed_args->push_back(std::make_shared<FlowArg2>(ArgString2{type + " " + args_joined}));
+    entry->parsed_args->push_back(gb->build_arg_string(type + " " + args_joined));
     entry->error = error_msg;
     entry->id(id);
     gb->entries[id] = entry;
@@ -480,11 +480,11 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
             int old_num_nexts = old_nt ? old_nt->num_nexts : 0;
 
             // Helper: wire a net and return ArgNet2
-            auto wire_output = [&](const std::string& net_name) -> ArgNet2 {
+            auto wire_output = [&](const std::string& net_name) -> FlowArg2Ptr {
                 auto [resolved, net_ptr] = gb->find_or_create_net(net_name, true);
                 if (auto net = net_ptr ? net_ptr->as_Net() : nullptr)
                     net->source(node_entry);
-                return {resolved, net_ptr};
+                return gb->build_arg_net(resolved, net_ptr);
             };
 
             // Filter out empty and -as_lambda entries, wire all nets
@@ -505,14 +505,14 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
                     // (it's implicit from NodeKind2::Flow)
                     if (!is_post_bang) {
                         while ((int)nb.outputs.size() <= i)
-                            nb.outputs.push_back({"$unconnected", gb->find("$unconnected")});
+                            nb.outputs.push_back(gb->build_arg_net("$unconnected", gb->find("$unconnected")));
                         nb.outputs[i] = std::move(arg);
                     }
                 }
             } else {
                 // Name-based mapping for non-expr nodes
                 int old_num_outs = old_nt ? old_nt->outputs : 0;
-                std::map<std::string, ArgNet2> out_net_map;
+                std::map<std::string, FlowArg2Ptr> out_net_map;
 
                 for (int i = 0; i < (int)cur_outputs.size(); i++) {
                     auto& net_name = cur_outputs[i];
@@ -550,9 +550,9 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
                             if (it2 != out_net_map.end())
                                 nb.outputs[i] = std::move(it2->second);
                             else
-                                nb.outputs[i] = {"$unconnected", unconnected};
+                                nb.outputs[i] = gb->build_arg_net("$unconnected", unconnected);
                         } else {
-                            nb.outputs[i] = {"$unconnected", unconnected};
+                            nb.outputs[i] = gb->build_arg_net("$unconnected", unconnected);
                         }
                     }
                 }
@@ -567,10 +567,10 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
             bool args_are_type = is_any_of(nb.type_id, NodeTypeID::Cast, NodeTypeID::New);
 
             // Helper: resolve net/node name to ArgNet2 and register destination
-            auto resolve_net = [&](const std::string& net_name) -> ArgNet2 {
+            auto resolve_net = [&](const std::string& net_name) -> FlowArg2Ptr {
                 if (net_name.empty()) {
                     auto [resolved, ptr] = gb->find_or_create_net("$unconnected");
-                    return {resolved, ptr};
+                    return gb->build_arg_net(resolved, ptr);
                 }
                 // Strip -as_lambda suffix → resolve to node entry directly
                 std::string resolved_name = net_name;
@@ -581,15 +581,14 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
                 // Try finding as any entry (node or net)
                 auto ptr = gb->find(resolved_name);
                 if (ptr) {
-                    // If it's a net, register as destination
                     if (auto net = ptr->as_Net())
                         net->destinations().push_back(node_entry);
-                    return {resolved_name, ptr};
+                    return gb->build_arg_net(resolved_name, ptr);
                 }
                 // Not found yet — create as net
                 auto [id, net_ptr] = gb->find_or_create_net(resolved_name);
                 net_ptr->as_Net()->destinations().push_back(node_entry);
-                return {id, net_ptr};
+                return gb->build_arg_net(id, net_ptr);
             };
 
             if (is_expr) {
@@ -606,7 +605,7 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
                         // $N remap
                         int remap_idx = i - bang_offset;
                         while ((int)nb.remaps.size() <= remap_idx)
-                            nb.remaps.push_back({"$unconnected", gb->find("$unconnected")});
+                            nb.remaps.push_back(gb->build_arg_net("$unconnected", gb->find("$unconnected")));
                         nb.remaps[remap_idx] = std::move(arg);
                     }
                 }
@@ -666,14 +665,14 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
                 }
 
                 // Step 2: Build port_name → ArgNet2 map from inputs array
-                std::map<std::string, ArgNet2> net_map;
+                std::map<std::string, FlowArg2Ptr> net_map;
                 for (int i = 0; i < (int)cur_inputs.size() && i < (int)old_pin_names.size(); i++) {
                     net_map[old_pin_names[i]] = resolve_net(cur_inputs[i]);
                 }
 
                 // Step 3: Build port_name → parsed_value map from inlined args
                 // Inlined args cover input_ports[0..num_inline_args-1]
-                std::map<std::string, FlowArg2> inline_map;
+                std::map<std::string, FlowArg2Ptr> inline_map;
                 if (!args_are_type && nb.parsed_args) {
                     auto info = compute_inline_args(args_joined, old_nt->inputs);
                     int num_inline = std::min(info.num_inline_args, old_nt->inputs);
@@ -689,31 +688,30 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
                     merged->rewrite_input_count = nb.parsed_args->rewrite_input_count;
 
                 // Helper: find value by port name with fallback for bang→bang_in rename
-                auto find_by_name = [&](const char* name) -> std::pair<bool, FlowArg2> {
+                auto find_by_name = [&](const char* name) -> FlowArg2Ptr {
                     auto net_it = net_map.find(name);
                     if (net_it != net_map.end())
-                        return {true, std::move(net_it->second)};
+                        return std::move(net_it->second);
                     auto inline_it = inline_map.find(name);
                     if (inline_it != inline_map.end())
-                        return {true, std::move(inline_it->second)};
-                    // Fallback: old "bang" → new "bang_in"
+                        return std::move(inline_it->second);
                     if (strcmp(name, "bang_in") == 0) {
                         auto it2 = net_map.find("bang");
                         if (it2 != net_map.end())
-                            return {true, std::move(it2->second)};
+                            return std::move(it2->second);
                     }
-                    return {false, {}};
+                    return nullptr;
                 };
 
                 // Pass 1: fill by name matching
                 std::vector<bool> filled(new_nt->total_inputs(), false);
                 for (int i = 0; i < new_nt->total_inputs(); i++) {
-                    auto [found, value] = find_by_name(new_nt->input_port(i)->name);
-                    if (found) {
+                    auto value = find_by_name(new_nt->input_port(i)->name);
+                    if (value) {
                         merged->push_back(std::move(value));
                         filled[i] = true;
                     } else {
-                        merged->push_back(resolve_net("")); // placeholder
+                        merged->push_back(resolve_net(""));
                     }
                 }
 
@@ -756,7 +754,7 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
         if (nb.parsed_args && nb.parsed_args->rewrite_input_count > (int)nb.remaps.size()) {
             auto unconnected = gb->find("$unconnected");
             while ((int)nb.remaps.size() < nb.parsed_args->rewrite_input_count)
-                nb.remaps.push_back({"$unconnected", unconnected});
+                nb.remaps.push_back(gb->build_arg_net("$unconnected", unconnected));
         }
 
         // Trim trailing $unconnected optional ports from parsed_args
@@ -765,7 +763,7 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
             auto* trim_nt = find_node_type2(nb.type_id);
             if (trim_nt && nb.parsed_args) {
                 while ((int)nb.parsed_args->size() > trim_nt->num_inputs) {
-                    auto* an = std::get_if<ArgNet2>(&nb.parsed_args->back());
+                    auto an = nb.parsed_args->back()->as_net();
                     if (!an || an->first() != "$unconnected") break;
                     nb.parsed_args->pop_back();
                 }
@@ -819,12 +817,12 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
         auto fixup_args = [&](ParsedArgs2* pa) {
             if (!pa) return;
             for (auto& a : *pa) {
-                if (auto* an = std::get_if<ArgNet2>(&a)) {
-                    if (!an->second() || !an->second()->as_Net()) continue;
-                    auto actual = gb->find(an->first());
-                    if (actual && actual->as_Node())
-                        an->entry(actual);
-                }
+                auto an = a->as_net();
+                if (!an) continue;
+                if (!an->second() || !an->second()->as_Net()) continue;
+                auto actual = gb->find(an->first());
+                if (actual && actual->as_Node())
+                    an->entry(actual);
             }
         };
         for (auto& [id, entry] : gb->entries) {
@@ -866,20 +864,19 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
         if (parent_ptr->parsed_args && shadow_ptr->parsed_args && !shadow_ptr->parsed_args->empty()) {
             std::string shadow_out_prefix = shadow_id + "-out";
             bool replaced = false;
-            for (auto& a : *parent_ptr->parsed_args) {
-                if (auto* an = std::get_if<ArgNet2>(&a)) {
-                    if (an->first().compare(0, shadow_out_prefix.size(), shadow_out_prefix) == 0) {
-                        a = (*shadow_ptr->parsed_args)[0];
-                        replaced = true;
-                        break;
-                    }
+            for (int ai = 0; ai < parent_ptr->parsed_args->size(); ai++) {
+                auto an = (*parent_ptr->parsed_args)[ai]->as_net();
+                if (an && an->first().compare(0, shadow_out_prefix.size(), shadow_out_prefix) == 0) {
+                    parent_ptr->parsed_args->set(ai, (*shadow_ptr->parsed_args)[0]);
+                    replaced = true;
+                    break;
                 }
             }
             // Fallback: try positional insertion (for nodes without merged inputs)
             if (!replaced) {
                 while ((int)parent_ptr->parsed_args->size() <= arg_index)
-                    parent_ptr->parsed_args->push_back(std::make_shared<FlowArg2>(ArgString2{""}));
-                (*parent_ptr->parsed_args)[arg_index] = (*shadow_ptr->parsed_args)[0];
+                    parent_ptr->parsed_args->push_back(gb->build_arg_string(""));
+                parent_ptr->parsed_args->set(arg_index, (*shadow_ptr->parsed_args)[0]);
             }
         }
 
@@ -889,12 +886,12 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
             auto& sin = sin_it->second;
             for (int i = 0; i < (int)sin.size(); i++) {
                 while ((int)parent_ptr->remaps.size() <= i)
-                    parent_ptr->remaps.push_back(ArgNet2{"$unconnected", unconnected_entry});
+                    parent_ptr->remaps.push_back(gb->build_arg_net("$unconnected", unconnected_entry));
 
                 if (!sin[i].empty()) {
                     auto net_ptr = gb->find(sin[i]);
                     if (net_ptr) {
-                        parent_ptr->remaps[i] = ArgNet2{sin[i], net_ptr};
+                        parent_ptr->remaps[i] = gb->build_arg_net(sin[i], net_ptr);
 
                         if (auto net = net_ptr->as_Net()) {
                             auto& dests = net->destinations();
@@ -983,9 +980,9 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
         };
 
         // Helper: rename ArgNet2 in-place
-        auto remap_arg = [&](FlowArg2& a) {
-            if (auto* an = std::get_if<ArgNet2>(&a))
-                an->id(remap_id(an->first()));
+        auto remap_arg = [&](const FlowArg2Ptr& a) {
+            if (auto n = a->as_net())
+                n->net_id(remap_id(n->first()));
         };
         auto remap_args = [&](ParsedArgs2* pa) {
             if (!pa) return;
@@ -998,8 +995,8 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
             if (!node_p) continue;
             remap_args(node_p->parsed_args.get());
             remap_args(node_p->parsed_va_args.get());
-            for (auto& r : node_p->remaps) r.id(remap_id(r.first()));
-            for (auto& o : node_p->outputs) o.id(remap_id(o.first()));
+            for (auto& r : node_p->remaps) if (auto n = r->as_net()) n->net_id(remap_id(n->first()));
+            for (auto& o : node_p->outputs) if (auto n = o->as_net()) n->net_id(remap_id(n->first()));
         }
 
         // Rebuild entries map with new keys
