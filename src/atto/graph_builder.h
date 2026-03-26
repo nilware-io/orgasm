@@ -26,6 +26,9 @@ struct GraphBuilder;
 struct FlowNodeBuilder;
 struct NetBuilder;
 
+using FlowNodeBuilderPtr = std::shared_ptr<FlowNodeBuilder>;
+using NetBuilderPtr = std::shared_ptr<NetBuilder>;
+
 // ─── FlowArg2: base class for all pin/arg types ───
 
 struct PortDesc2; // forward
