@@ -79,15 +79,15 @@ struct PinMapping {
     int add_pin_pos = -1;           // position of +diamond (-1 if none)
     bool has_va = false;
 
-    static PinMapping build(const FlowNodeBuilder& node, const NodeType2* nt) {
+    static PinMapping build(const FlowNodeBuilderPtr& node, const NodeType2* nt) {
         PinMapping m;
         m.has_va = nt && nt->va_args != nullptr;
-        int parsed_size = node.parsed_args ? (int)node.parsed_args->size() : 0;
+        int parsed_size = node->parsed_args ? (int)node->parsed_args->size() : 0;
 
         // Base args: track which parsed_args indices are ArgNet2
-        if (node.parsed_args) {
+        if (node->parsed_args) {
             for (int i = 0; i < parsed_size; i++) {
-                if (std::holds_alternative<ArgNet2>((*node.parsed_args)[i])) {
+                if (std::holds_alternative<ArgNet2>((*node->parsed_args)[i])) {
                     m.pin_to_port.push_back(i);
                     m.base_count++;
                 }
@@ -103,9 +103,9 @@ struct PinMapping {
             }
         }
         // Va_args
-        if (node.parsed_va_args) {
-            for (int i = 0; i < (int)node.parsed_va_args->size(); i++) {
-                if (std::holds_alternative<ArgNet2>((*node.parsed_va_args)[i])) {
+        if (node->parsed_va_args) {
+            for (int i = 0; i < (int)node->parsed_va_args->size(); i++) {
+                if (std::holds_alternative<ArgNet2>((*node->parsed_va_args)[i])) {
                     m.pin_to_port.push_back(-(i + 1)); // negative = va_args index (1-based)
                     m.va_count++;
                 }
@@ -117,7 +117,7 @@ struct PinMapping {
             m.pin_to_port.push_back(-1000); // sentinel for +diamond
         }
         // Remaps
-        for (int i = 0; i < (int)node.remaps.size(); i++) {
+        for (int i = 0; i < (int)node->remaps.size(); i++) {
             m.pin_to_port.push_back(-2000 - i); // sentinel for remap i
         }
         return m;
@@ -154,10 +154,10 @@ struct NodeLayout {
     }
 };
 
-static NodeLayout compute_node_layout(const FlowNodeBuilder& node, ImVec2 canvas_origin, float zoom) {
-    auto* nt = find_node_type2(node.type_id);
+static NodeLayout compute_node_layout(const FlowNodeBuilderPtr& node, ImVec2 canvas_origin, float zoom) {
+    auto* nt = find_node_type2(node->type_id);
     std::string display = nt ? nt->name : "?";
-    std::string args = node.args_str();
+    std::string args = node->args_str();
     if (!args.empty()) display += " " + args;
 
     float font_size = ImGui::GetFontSize() * zoom;
@@ -167,9 +167,9 @@ static NodeLayout compute_node_layout(const FlowNodeBuilder& node, ImVec2 canvas
     auto pm = PinMapping::build(node, nt);
     int num_in = pm.total();
     int num_out = nt ? nt->num_outputs : 1;
-    if (node.type_id == NodeTypeID::Expr || node.type_id == NodeTypeID::ExprBang) {
-        int args_count = node.parsed_args ? (int)node.parsed_args->size() : 0;
-        if (node.type_id == NodeTypeID::ExprBang) num_out = 1 + std::max(1, args_count);
+    if (node->type_id == NodeTypeID::Expr || node->type_id == NodeTypeID::ExprBang) {
+        int args_count = node->parsed_args ? (int)node->parsed_args->size() : 0;
+        if (node->type_id == NodeTypeID::ExprBang) num_out = 1 + std::max(1, args_count);
         else num_out = std::max(1, args_count);
     }
 
@@ -178,8 +178,8 @@ static NodeLayout compute_node_layout(const FlowNodeBuilder& node, ImVec2 canvas
     float node_w = std::max({S.node_min_width * zoom, text_w, pin_w_top, pin_w_bot});
     float node_h = S.node_height * zoom;
 
-    ImVec2 pos = {canvas_origin.x + node.position.x * zoom,
-                  canvas_origin.y + node.position.y * zoom};
+    ImVec2 pos = {canvas_origin.x + node->position.x * zoom,
+                  canvas_origin.y + node->position.y * zoom};
 
     return {pos, node_w, node_h, num_in, num_out, zoom};
 }
@@ -257,18 +257,18 @@ void Editor2Pane::draw() {
 
     // Draw nodes (skip shadows)
     for (auto& [id, entry] : gb_->entries) {
-        if (std::holds_alternative<FlowNodeBuilder>(*entry)) {
-            auto& node = std::get<FlowNodeBuilder>(*entry);
-            if (node.shadow) throw std::logic_error("Editor2Pane: shadow nodes must be folded before rendering (id: " + id + ")");
-            draw_node(dl, id, node, canvas_origin);
+        if (auto node = entry->as_Node()) {
+            if (node->shadow) throw std::logic_error("Editor2Pane: shadow nodes must be folded before rendering (id: " + id + ")");
+            draw_node(dl, node, canvas_origin);
         }
     }
 
     // Draw wires by iterating each node's inputs/outputs/remaps
     for (auto& [dst_id, dst_entry] : gb_->entries) {
-        if (!std::holds_alternative<FlowNodeBuilder>(*dst_entry)) continue;
-        auto& dst_node = std::get<FlowNodeBuilder>(*dst_entry);
-        auto* dst_nt = find_node_type2(dst_node.type_id);
+        auto dst_node = dst_entry->as_Node();
+        if (!dst_node) continue;
+
+        auto* dst_nt = find_node_type2(dst_node->type_id);
         if (!dst_nt) continue;
         auto dst_layout = compute_node_layout(dst_node, canvas_origin, canvas_zoom_);
 
@@ -277,34 +277,33 @@ void Editor2Pane::draw() {
         auto draw_wire_to_pin = [&](int dst_pin, const BuilderEntryPtr& entry, const NodeId& net_id) {
             if (!entry) return;
 
-            FlowNodeBuilder* src_node_ptr = nullptr;
+            FlowNodeBuilderPtr src_node_ptr = nullptr;
             bool named = false;
             bool is_lambda = false;
             int source_pin = 0;
 
-            if (std::holds_alternative<NetBuilder>(*entry)) {
-                auto& net = std::get<NetBuilder>(*entry);
-                if (net.is_the_unconnected) return;
-                auto src_ptr = net.source.lock();
-                if (!src_ptr || !std::holds_alternative<FlowNodeBuilder>(*src_ptr)) return;
-                src_node_ptr = &std::get<FlowNodeBuilder>(*src_ptr);
-                named = !net.auto_wire;
-                // Find which output pin this net is on
+            if (auto net = entry->as_Net()) {
+                if (net->is_the_unconnected) return;
+                auto src_ptr = net->source.lock();
+                auto src_node = src_ptr ? src_ptr->as_Node() : nullptr;
+                if (!src_node) return;
+                src_node_ptr = src_node;
+                named = !net->auto_wire;
                 for (int k = 0; k < (int)src_node_ptr->outputs.size(); k++) {
                     if (src_node_ptr->outputs[k].second == entry) {
                         source_pin = k;
                         break;
                     }
                 }
-            } else if (std::holds_alternative<FlowNodeBuilder>(*entry)) {
-                src_node_ptr = &std::get<FlowNodeBuilder>(*entry);
+            } else if (auto node = entry->as_Node()) {
+                src_node_ptr = node;
                 is_lambda = true;
             } else {
                 return;
             }
 
             auto* src_nt = find_node_type2(src_node_ptr->type_id);
-            auto src_layout = compute_node_layout(*src_node_ptr, canvas_origin, canvas_zoom_);
+            auto src_layout = compute_node_layout(src_node_ptr, canvas_origin, canvas_zoom_);
             ImVec2 to = dst_layout.input_pin_pos(dst_pin);
             float th = S.wire_thickness * canvas_zoom_;
 
@@ -358,20 +357,20 @@ void Editor2Pane::draw() {
             if (dst_pm.is_absent_optional(i)) continue;
             if (dst_pm.is_base(i)) {
                 int port = dst_pm.port_index(i);
-                if (dst_node.parsed_args && port < (int)dst_node.parsed_args->size()) {
-                    if (auto* an = std::get_if<ArgNet2>(&(*dst_node.parsed_args)[port]))
+                if (dst_node->parsed_args && port < (int)dst_node->parsed_args->size()) {
+                    if (auto* an = std::get_if<ArgNet2>(&(*dst_node->parsed_args)[port]))
                         draw_wire_to_pin(i, an->second, an->first);
                 }
             } else if (dst_pm.is_va(i)) {
                 int va_idx = -(dst_pm.port_index(i) + 1);
-                if (dst_node.parsed_va_args && va_idx < (int)dst_node.parsed_va_args->size()) {
-                    if (auto* an = std::get_if<ArgNet2>(&(*dst_node.parsed_va_args)[va_idx]))
+                if (dst_node->parsed_va_args && va_idx < (int)dst_node->parsed_va_args->size()) {
+                    if (auto* an = std::get_if<ArgNet2>(&(*dst_node->parsed_va_args)[va_idx]))
                         draw_wire_to_pin(i, an->second, an->first);
                 }
             } else if (dst_pm.is_remap(i)) {
                 int ri = dst_pm.remap_index(i);
-                if (ri < (int)dst_node.remaps.size())
-                    draw_wire_to_pin(i, dst_node.remaps[ri].second, dst_node.remaps[ri].first);
+                if (ri < (int)dst_node->remaps.size())
+                    draw_wire_to_pin(i, dst_node->remaps[ri].second, dst_node->remaps[ri].first);
             }
         }
     }
@@ -385,9 +384,9 @@ void Editor2Pane::draw() {
         dragging_node_.clear();
         // Iterate in reverse so topmost (last drawn) is hit first
         for (auto it = gb_->entries.rbegin(); it != gb_->entries.rend(); ++it) {
-            if (!std::holds_alternative<FlowNodeBuilder>(*it->second)) continue;
-            auto& node = std::get<FlowNodeBuilder>(*it->second);
-            auto layout = compute_node_layout(node, canvas_origin, canvas_zoom_);
+            auto node_p = it->second->as_Node();
+            if (!node_p) continue;
+            auto layout = compute_node_layout(node_p, canvas_origin, canvas_zoom_);
             if (mouse.x >= layout.pos.x && mouse.x <= layout.pos.x + layout.width &&
                 mouse.y >= layout.pos.y && mouse.y <= layout.pos.y + layout.height) {
                 dragging_node_ = it->first;
@@ -403,11 +402,11 @@ void Editor2Pane::draw() {
     }
     if (dragging_started_ && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && !dragging_node_.empty()) {
         auto it = gb_->entries.find(dragging_node_);
-        if (it != gb_->entries.end() && std::holds_alternative<FlowNodeBuilder>(*it->second)) {
-            auto& node = std::get<FlowNodeBuilder>(*it->second);
+        auto drag_node = (it != gb_->entries.end()) ? it->second->as_Node() : nullptr;
+        if (drag_node) {
             ImVec2 delta = ImGui::GetIO().MouseDelta;
-            node.position.x += delta.x / canvas_zoom_;
-            node.position.y += delta.y / canvas_zoom_;
+            drag_node->position.x += delta.x / canvas_zoom_;
+            drag_node->position.y += delta.y / canvas_zoom_;
         }
     }
     if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
@@ -443,9 +442,9 @@ void Editor2Pane::draw() {
 
 // ─── Draw a node ───
 
-void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuilder& node,
+void Editor2Pane::draw_node(ImDrawList* dl, const FlowNodeBuilderPtr& node,
                              ImVec2 canvas_origin) {
-    auto* nt = find_node_type2(node.type_id);
+    auto* nt = find_node_type2(node->type_id);
     if (!nt) return;
 
     auto layout = compute_node_layout(node, canvas_origin, canvas_zoom_);
@@ -454,15 +453,15 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
     if (nt->is_special()) {
         // Display first arg without quotes
         std::string display;
-        if (node.parsed_args && !node.parsed_args->empty()) {
-            auto& a = (*node.parsed_args)[0];
+        if (node->parsed_args && !node->parsed_args->empty()) {
+            auto& a = (*node->parsed_args)[0];
             if (auto* s = std::get_if<ArgString2>(&a)) display = s->value;
             else if (auto* e = std::get_if<ArgExpr2>(&a)) display = e->expr;
-            else display = node.args_str();
+            else display = node->args_str();
         }
 
         float font_size = ImGui::GetFontSize() * canvas_zoom_;
-        bool is_error = (node.type_id == NodeTypeID::Error);
+        bool is_error = (node->type_id == NodeTypeID::Error);
 
         if (is_error) {
             // Error: red box
@@ -485,11 +484,11 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
 
     // Display text
     std::string display = nt->name;
-    std::string args = node.args_str();
+    std::string args = node->args_str();
     if (!args.empty()) display += " " + args;
 
-    bool selected = selected_nodes_.count(id);
-    bool has_error = !node.error.empty();
+    bool selected = selected_nodes_.count(node->id);
+    bool has_error = !node->error.empty();
 
     ImU32 col = has_error ? S.col_node_err : (selected ? S.col_node_sel : S.col_node);
     dl->AddRectFilled(layout.pos, {layout.pos.x + layout.width, layout.pos.y + layout.height},
@@ -727,11 +726,11 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
         mouse.y >= layout.pos.y && mouse.y <= layout.pos.y + layout.height) {
         ImGui::BeginTooltip();
         ImGui::SetWindowFontScale(S.tooltip_scale);
-        ImGui::Text("id: %s", id.c_str());
-        if (node.parsed_args) {
-            ImGui::Text("parsed_args (%d):", (int)node.parsed_args->size());
-            for (int i = 0; i < (int)node.parsed_args->size(); i++) {
-                auto& a = (*node.parsed_args)[i];
+        ImGui::Text("id: %s", node->id.c_str());
+        if (node->parsed_args) {
+            ImGui::Text("parsed_args (%d):", (int)node->parsed_args->size());
+            for (int i = 0; i < (int)node->parsed_args->size(); i++) {
+                auto& a = (*node->parsed_args)[i];
                 if (auto* n = std::get_if<ArgNet2>(&a))
                     ImGui::Text("  [%d] net: %s", i, n->first.c_str());
                 else if (auto* e = std::get_if<ArgExpr2>(&a))
@@ -742,10 +741,10 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
                     ImGui::Text("  [%d] num: %g", i, v->value);
             }
         }
-        if (node.parsed_va_args && !node.parsed_va_args->empty()) {
-            ImGui::Text("parsed_va_args (%d):", (int)node.parsed_va_args->size());
-            for (int i = 0; i < (int)node.parsed_va_args->size(); i++) {
-                auto& a = (*node.parsed_va_args)[i];
+        if (node->parsed_va_args && !node->parsed_va_args->empty()) {
+            ImGui::Text("parsed_va_args (%d):", (int)node->parsed_va_args->size());
+            for (int i = 0; i < (int)node->parsed_va_args->size(); i++) {
+                auto& a = (*node->parsed_va_args)[i];
                 if (auto* n = std::get_if<ArgNet2>(&a))
                     ImGui::Text("  [%d] net: %s", i, n->first.c_str());
                 else if (auto* e = std::get_if<ArgExpr2>(&a))
@@ -756,15 +755,15 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
                     ImGui::Text("  [%d] num: %g", i, v->value);
             }
         }
-        if (!node.remaps.empty()) {
-            ImGui::Text("remaps (%d):", (int)node.remaps.size());
-            for (int i = 0; i < (int)node.remaps.size(); i++)
-                ImGui::Text("  $%d -> %s", i, node.remaps[i].first.c_str());
+        if (!node->remaps.empty()) {
+            ImGui::Text("remaps (%d):", (int)node->remaps.size());
+            for (int i = 0; i < (int)node->remaps.size(); i++)
+                ImGui::Text("  $%d -> %s", i, node->remaps[i].first.c_str());
         }
         ImGui::EndTooltip();
     }
 }
 
-void Editor2Pane::draw_net(ImDrawList*, const NodeId&, const NetBuilder&, ImVec2) {
+void Editor2Pane::draw_net(ImDrawList*, const NetBuilderPtr&, ImVec2) {
     // Unused — wires drawn per-node in draw()
 }

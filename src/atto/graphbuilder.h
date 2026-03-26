@@ -17,10 +17,34 @@ using BuilderError = std::string;
 
 // ─── Forward declarations & aliases ───
 
+enum class IdCategory {
+    Node,
+    Net
+};
+
 struct FlowNodeBuilder;
 struct NetBuilder;
 
-using BuilderEntry = std::variant<FlowNodeBuilder, NetBuilder>;
+struct BuilderEntry: std::enable_shared_from_this<BuilderEntry> {
+    BuilderEntry(IdCategory category) : category(category) { }
+    virtual ~BuilderEntry() = default;
+
+    NodeId id;
+
+    bool is(IdCategory category) { return this->category == category; }
+    
+    std::shared_ptr<FlowNodeBuilder> as_Node() {
+        return std::dynamic_pointer_cast<FlowNodeBuilder>(shared_from_this());
+    }
+
+    std::shared_ptr<NetBuilder> as_Net() {
+        return std::dynamic_pointer_cast<NetBuilder>(shared_from_this());
+    }
+
+    private:
+        const IdCategory category;
+};
+
 using BuilderEntryPtr = std::shared_ptr<BuilderEntry>;
 using BuilderEntryWeak = std::weak_ptr<BuilderEntry>;
 
@@ -51,7 +75,9 @@ std::string reconstruct_args_str(const ParsedArgs2& args);
 // ─── Builder types ───
 
 // Named wire — one source, many destinations (weak refs to BuilderEntry, must be FlowNodeBuilder).
-struct NetBuilder {
+struct NetBuilder: BuilderEntry {
+    NetBuilder(): BuilderEntry(IdCategory::Net) { }
+
     bool auto_wire = false;
     bool is_the_unconnected = false;  // true for the special $unconnected sentinel
 
@@ -63,12 +89,16 @@ struct NetBuilder {
     void validate() const;
 };
 
+using NetBuilderPtr = std::shared_ptr<NetBuilder>;
+
 // Remap: $N → net mapping (from folded shadow inputs)
 using Remaps = std::vector<ArgNet2>;
 using Outputs = std::vector<ArgNet2>;
 
 // A node under construction — holds structured parsed args instead of raw string.
-struct FlowNodeBuilder {
+struct FlowNodeBuilder: BuilderEntry {
+    FlowNodeBuilder(): BuilderEntry(IdCategory::Node) { }
+
     NodeTypeID type_id = NodeTypeID::Unknown;
     std::shared_ptr<ParsedArgs2> parsed_args;      // base pins (1:1 with descriptor)
     std::shared_ptr<ParsedArgs2> parsed_va_args;   // va_args pins
@@ -81,13 +111,15 @@ struct FlowNodeBuilder {
     std::string args_str() const;
 };
 
+using FlowNodeBuilderPtr = std::shared_ptr<FlowNodeBuilder>;
+
 using BuilderResult = std::variant<std::pair<NodeId, FlowNodeBuilder>, BuilderError>;
 
 struct GraphBuilder {
     TypePool pool;
     std::map<NodeId, BuilderEntryPtr> entries;
 
-    FlowNodeBuilder& add_node(NodeId id, NodeTypeID type, std::shared_ptr<ParsedArgs2> args);
+    std::shared_ptr<FlowNodeBuilder> add_node(NodeId id, NodeTypeID type, std::shared_ptr<ParsedArgs2> args);
 
     // Ensure the $unconnected sentinel net exists
     void ensure_unconnected();
@@ -96,9 +128,8 @@ struct GraphBuilder {
 
     BuilderEntryPtr find(const NodeId& id);
 
-    std::pair<NodeId, BuilderEntryPtr> find_node(const NodeId& id);
-    std::pair<NodeId, BuilderEntryPtr> find_net(const NodeId& name);
-    std::pair<NodeId, BuilderEntryPtr> find_entity(const NodeId& id);  // returns node or net
+    FlowNodeBuilderPtr find_node(const NodeId& id);
+    NetBuilderPtr find_net(const NodeId& name);
 
     void compact();
 

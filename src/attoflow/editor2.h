@@ -38,8 +38,8 @@ private:
     int editing_link_id_ = -1; // not used yet, placeholder
 
     // Drawing helpers
-    void draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuilder& node,
+    void draw_node(ImDrawList* dl, const FlowNodeBuilderPtr& node,
                    ImVec2 canvas_origin);
-    void draw_net(ImDrawList* dl, const NodeId& id, const NetBuilder& net,
+    void draw_net(ImDrawList* dl, const NetBuilderPtr& net,
                   ImVec2 canvas_origin);
 };
