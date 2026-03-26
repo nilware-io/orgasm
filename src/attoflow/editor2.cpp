@@ -403,63 +403,77 @@ void Editor2Pane::draw() {
         }
     }
 
-    // Wire hover: highlight + tooltip
-    if (canvas_hovered) {
-        ImVec2 mouse = ImGui::GetIO().MousePos;
-        float wire_hit_threshold = S.wire_hit_threshold * canvas_zoom_;
-        const WireInfo* hovered_wire = nullptr;
-        float best_dist = wire_hit_threshold;
-        for (auto& w : drawn_wires) {
-            float d = point_to_bezier_dist(mouse, w.p0, w.p1, w.p2, w.p3);
-            if (d < best_dist) {
-                best_dist = d;
-                hovered_wire = &w;
-            }
-        }
-        if (hovered_wire) {
-            // Redraw the wire brighter as highlight
-            float th = (S.wire_thickness + 2.0f) * canvas_zoom_;
-            ImU32 col = S.col_pin_hover;
-            dl->AddBezierCubic(hovered_wire->p0, hovered_wire->p1, hovered_wire->p2, hovered_wire->p3, col, th);
-
-            // Tooltip
-            ImGui::BeginTooltip();
-            ImGui::SetWindowFontScale(S.tooltip_scale);
-            if (hovered_wire->is_lambda) {
-                ImGui::Text("lambda: %s", hovered_wire->src_id.c_str());
-            } else {
-                ImGui::Text("net: %s", hovered_wire->net_id.c_str());
-            }
-            ImGui::Text("src: %s", hovered_wire->src_id.c_str());
-            ImGui::Text("dst: %s", hovered_wire->dst_id.c_str());
-            ImGui::EndTooltip();
-        }
-    }
-
     dl->PopClipRect();
 
-    // ─── Selection + dragging with left mouse ───
-    if (canvas_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    // ─── Determine hover item (node or wire) ───
+    hover_item_.reset();
+    if (canvas_hovered) {
         ImVec2 mouse = ImGui::GetIO().MousePos;
 
-        // Hit test: find node under mouse (reverse order = topmost first)
-        FlowNodeBuilderPtr hit_node = nullptr;
+        // Check nodes first (they have priority over wires)
         for (auto it = gb_->entries.rbegin(); it != gb_->entries.rend(); ++it) {
             auto node = it->second->as_Node();
             if (!node) continue;
             auto layout = compute_node_layout(node, canvas_origin, canvas_zoom_);
             if (mouse.x >= layout.pos.x && mouse.x <= layout.pos.x + layout.width &&
                 mouse.y >= layout.pos.y && mouse.y <= layout.pos.y + layout.height) {
-                hit_node = node;
+                hover_item_ = node;
                 break;
             }
         }
 
-        if (hit_node) {
-            // If node is not already in selection, replace selection with just this node
-            if (!selected_nodes_.count(hit_node)) {
+        // If no node hit, check wires
+        if (hover_item_.expired()) {
+            float wire_thresh = S.wire_hit_threshold * canvas_zoom_;
+            float best_dist = wire_thresh;
+            BuilderEntryPtr best_wire;
+            const WireInfo* best_wire_info = nullptr;
+            for (auto& w : drawn_wires) {
+                float d = point_to_bezier_dist(mouse, w.p0, w.p1, w.p2, w.p3);
+                if (d < best_dist) {
+                    best_dist = d;
+                    auto entry = gb_->find(w.net_id);
+                    if (entry) { best_wire = entry; best_wire_info = &w; }
+                }
+            }
+            if (best_wire) hover_item_ = best_wire;
+
+            // Draw wire highlight + tooltip
+            if (best_wire_info) {
+                float th = (S.wire_thickness + 2.0f) * canvas_zoom_;
+                dl->AddBezierCubic(best_wire_info->p0, best_wire_info->p1,
+                                   best_wire_info->p2, best_wire_info->p3, S.col_pin_hover, th);
+                ImGui::BeginTooltip();
+                ImGui::SetWindowFontScale(S.tooltip_scale);
+                if (best_wire_info->is_lambda)
+                    ImGui::Text("lambda: %s", best_wire_info->src_id.c_str());
+                else
+                    ImGui::Text("net: %s", best_wire_info->net_id.c_str());
+                ImGui::Text("src: %s", best_wire_info->src_id.c_str());
+                ImGui::Text("dst: %s", best_wire_info->dst_id.c_str());
+                ImGui::EndTooltip();
+            }
+        }
+    }
+
+    auto hover_locked = hover_item_.lock();
+    auto hover_node = hover_locked ? hover_locked->as_Node() : nullptr;
+
+    // ─── Selection + dragging with left mouse ───
+    if (canvas_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        bool ctrl = ImGui::GetIO().KeyCtrl;
+
+        if (ctrl && hover_node) {
+            // Ctrl+click: toggle node in selection
+            if (selected_nodes_.count(hover_node))
+                selected_nodes_.erase(hover_node);
+            else
+                selected_nodes_.insert(hover_node);
+        } else if (hover_node) {
+            // Regular click on node: select if not already, start drag
+            if (!selected_nodes_.count(hover_node)) {
                 selected_nodes_.clear();
-                selected_nodes_.insert(hit_node);
+                selected_nodes_.insert(hover_node);
             }
             dragging_started_ = true;
 
@@ -601,13 +615,15 @@ void Editor2Pane::draw_node(ImDrawList* dl, const FlowNodeBuilderPtr& node,
     if (!args.empty()) display += " " + args;
 
     bool selected = selected_nodes_.count(node);
+    bool hovered = (hover_item_.lock() == node);
     bool has_error = !node->error.empty();
 
     ImU32 col = has_error ? S.col_node_err : (selected ? S.col_node_sel : S.col_node);
     dl->AddRectFilled(layout.pos, {layout.pos.x + layout.width, layout.pos.y + layout.height},
                       col, S.node_rounding * canvas_zoom_);
     dl->AddRect(layout.pos, {layout.pos.x + layout.width, layout.pos.y + layout.height},
-                S.col_node_border, S.node_rounding * canvas_zoom_);
+                hovered ? S.col_pin_hover : S.col_node_border, S.node_rounding * canvas_zoom_,
+                0, hovered ? S.highlight_thickness : 1.0f);
 
     // Text
     float font_size = ImGui::GetFontSize() * canvas_zoom_;

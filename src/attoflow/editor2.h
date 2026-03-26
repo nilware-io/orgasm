@@ -31,6 +31,8 @@ private:
     float canvas_zoom_ = 1.0f;
 
     // Interaction state
+    BuilderEntryWeak hover_item_;       // current hovered item (node or net), empty = nothing
+    // TODO: pins will be part of hover_item_ system (needs Pin as a graph entity or lightweight ID)
     std::set<FlowNodeBuilderPtr> selected_nodes_;
     bool dragging_started_ = false;
     bool drag_was_overlapping_ = false; // true if node was overlapping when drag began
