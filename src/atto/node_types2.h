@@ -314,7 +314,9 @@ static const NodeType2 NODE_TYPES2[] = {
         .name = "discard",
         .desc = "Discard input values",
         .input_ports = P2_VALUE,
-        .num_inputs = 1
+        .num_inputs = 1,
+        .output_ports = P2_NEXT,
+        .num_outputs = 1
     },
     {
         .kind = NodeKind2::Declaration,
@@ -438,7 +440,9 @@ static const NodeType2 NODE_TYPES2[] = {
         .name = "store",
         .desc = "Store value",
         .input_ports = P2_STORE_IN,
-        .num_inputs = 2
+        .num_inputs = 2,
+        .output_ports = P2_NEXT,
+        .num_outputs = 1
     },
     {
         .kind = NodeKind2::Banged,
@@ -507,7 +511,9 @@ static const NodeType2 NODE_TYPES2[] = {
         .name = "iterate",
         .desc = "Iterate collection",
         .input_ports = P2_ITERATE_IN,
-        .num_inputs = 2
+        .num_inputs = 2,
+        .output_ports = P2_NEXT,
+        .num_outputs = 1
     },
     {
         .kind = NodeKind2::Banged,
@@ -534,7 +540,9 @@ static const NodeType2 NODE_TYPES2[] = {
         .desc = "Execute under mutex lock",
         .input_ports = P2_LOCK_IN,
         .num_inputs = 2,
-        .input_ports_va_args = &P2_VA_PARAM
+        .input_ports_va_args = &P2_VA_PARAM,
+        .output_ports = P2_NEXT,
+        .num_outputs = 1,
     },
     {
         .kind = NodeKind2::Banged,

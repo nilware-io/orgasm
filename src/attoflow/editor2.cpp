@@ -187,10 +187,16 @@ static NodeLayout compute_node_layout(const FlowNodeBuilderPtr& node, ImVec2 can
     auto pm = PinMapping::build(node, nt);
     int num_in = pm.total();
     // Output pin count: fixed outputs + output va_args
-    // For flow nodes, outputs[0] is the side-bang (not rendered at bottom)
+    // Flow nodes skip outputs[0] (side-bang rendered on the right, not bottom)
     int fixed_out = nt ? nt->num_outputs : (int)node->outputs.size();
+    int skip_side_bang = 0;
+    if (nt && nt->is_flow()) {
+        if (node->outputs.empty())
+            throw std::logic_error("Flow node '" + node->id() + "' must have at least one output (side-bang)");
+        skip_side_bang = 1;
+    }
     int va_out = (int)node->outputs_va_args.size();
-    int num_out = fixed_out + va_out;
+    int num_out = std::max(0, fixed_out - skip_side_bang) + va_out;
 
     float pin_w_top = std::max(0, num_in) * S.pin_spacing * zoom;
     float pin_w_bot = std::max(0, num_out) * S.pin_spacing * zoom;
@@ -359,7 +365,10 @@ void Editor2Pane::draw() {
                     float dy = std::max(std::abs(to.y - from.y) * 0.5f, 30.0f * canvas_zoom_);
                     cp1 = {from.x + dx, from.y}; cp2 = {to.x, to.y - dy};
                 } else {
-                    from = src_layout.output_pin_pos(source_pin);
+                    // Visual pin index: skip side-bang for flow nodes
+                    int visual_pin = source_pin;
+                    if (src_nt && src_nt->is_flow()) visual_pin = std::max(0, visual_pin - 1);
+                    from = src_layout.output_pin_pos(visual_pin);
                     float dy = std::max(std::abs(to.y - from.y) * 0.5f, 30.0f * canvas_zoom_);
                     cp1 = {from.x, from.y + dy}; cp2 = {to.x, to.y - dy};
                 }
@@ -710,15 +719,18 @@ void Editor2Pane::draw_node(ImDrawList* dl, const FlowNodeBuilderPtr& node,
         }
     }
 
-    // Draw output pins (bottom): fixed outputs then va_args outputs
+    // Draw output pins (bottom): skip side-bang for flow nodes, then fixed outputs, then va_args
+    int skip_sb = (nt->is_flow()) ? 1 : 0;
     int fixed_out = nt->num_outputs;
-    int va_out = (int)node->outputs_va_args.size();
+    int rendered_fixed = fixed_out - skip_sb; // fixed outputs rendered at bottom
     for (int i = 0; i < layout.num_out; i++) {
         ImVec2 pp = layout.output_pin_pos(i);
-        bool is_output_va = (i >= fixed_out);
+        int out_idx = i + skip_sb; // index into outputs[] (skip side-bang)
+        bool is_output_va = (i >= rendered_fixed);
+
         PortKind2 kind = PortKind2::Data;
-        if (!is_output_va && nt->output_ports && i < nt->num_outputs)
-            kind = nt->output_ports[i].kind;
+        if (!is_output_va && nt->output_ports && out_idx < nt->num_outputs)
+            kind = nt->output_ports[out_idx].kind;
         else if (is_output_va && nt->output_ports_va_args)
             kind = nt->output_ports_va_args->kind;
 
@@ -726,7 +738,6 @@ void Editor2Pane::draw_node(ImDrawList* dl, const FlowNodeBuilderPtr& node,
         if (kind == PortKind2::BangNext) {
             dl->AddRectFilled({pp.x - pr, pp.y - pr}, {pp.x + pr, pp.y + pr}, pc);
         } else if (is_output_va) {
-            // Diamond for output va_args (no +diamond button)
             dl->AddQuadFilled({pp.x, pp.y + pr}, {pp.x + pr, pp.y}, {pp.x, pp.y - pr}, {pp.x - pr, pp.y}, pc);
         } else {
             dl->AddCircleFilled(pp, pr, pc);
@@ -824,20 +835,24 @@ void Editor2Pane::draw_node(ImDrawList* dl, const FlowNodeBuilderPtr& node,
                 return;
             }
         }
-        // Output pins (fixed + va_args)
+        // Output pins (skip side-bang, then fixed, then va_args)
+        {
+        int hl_skip_sb = nt->is_flow() ? 1 : 0;
+        int hl_rendered_fixed = fixed_out - hl_skip_sb;
         for (int i = 0; i < layout.num_out; i++) {
+            int out_idx = i + hl_skip_sb;
+            bool is_output_va = (i >= hl_rendered_fixed);
             FlowArg2Ptr out_pin = nullptr;
-            bool is_output_va = (i >= fixed_out);
-            if (!is_output_va && i < (int)node->outputs.size())
-                out_pin = node->outputs[i];
-            else if (is_output_va && (i - fixed_out) < (int)node->outputs_va_args.size())
-                out_pin = node->outputs_va_args[i - fixed_out];
+            if (!is_output_va && out_idx < (int)node->outputs.size())
+                out_pin = node->outputs[out_idx];
+            else if (is_output_va && (i - hl_rendered_fixed) < (int)node->outputs_va_args.size())
+                out_pin = node->outputs_va_args[i - hl_rendered_fixed];
 
             if (out_pin == hovered_pin) {
                 ImVec2 pp = layout.output_pin_pos(i);
                 PinShape2 shape = PinShape2::Circle;
-                if (!is_output_va && nt->output_ports && i < nt->num_outputs &&
-                    nt->output_ports[i].kind == PortKind2::BangNext)
+                if (!is_output_va && nt->output_ports && out_idx < nt->num_outputs &&
+                    nt->output_ports[out_idx].kind == PortKind2::BangNext)
                     shape = PinShape2::Square;
                 else if (is_output_va)
                     shape = PinShape2::Diamond;
@@ -853,6 +868,7 @@ void Editor2Pane::draw_node(ImDrawList* dl, const FlowNodeBuilderPtr& node,
                 }
                 return;
             }
+        }
         }
         // Side-bang
         if (nt->is_flow() && !node->outputs.empty() && node->outputs[0] == hovered_pin) {
@@ -994,16 +1010,19 @@ Editor2Pane::HoverItem Editor2Pane::detect_hover(
             }
         }
 
-        // Output pins (fixed + va_args)
+        // Output pins (skip side-bang for flow, then fixed, then va_args)
         {
-            int n_fixed_out = nt->num_outputs;
+            int skip_sb = nt->is_flow() ? 1 : 0;
+            int rendered_fixed = nt->num_outputs - skip_sb;
             for (int i = 0; i < layout.num_out; i++) {
                 float pd = d2(mouse, layout.output_pin_pos(i));
                 if (pd < pin_thresh) {
-                    if (i < n_fixed_out && i < (int)node->outputs.size() && node->outputs[i])
-                        try_candidate(pd - pin_bias, node->outputs[i]);
-                    else if (i >= n_fixed_out) {
-                        int vi = i - n_fixed_out;
+                    int out_idx = i + skip_sb;
+                    bool is_va = (i >= rendered_fixed);
+                    if (!is_va && out_idx < (int)node->outputs.size() && node->outputs[out_idx])
+                        try_candidate(pd - pin_bias, node->outputs[out_idx]);
+                    else if (is_va) {
+                        int vi = i - rendered_fixed;
                         if (vi < (int)node->outputs_va_args.size() && node->outputs_va_args[vi])
                             try_candidate(pd - pin_bias, node->outputs_va_args[vi]);
                     }
