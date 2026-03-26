@@ -9,23 +9,57 @@
 #include <cstdio>
 #include <stdexcept>
 
-// ─── Constants ───
+// ─── Style ───
 
-static constexpr float NODE_MIN_WIDTH = 80.0f;
-static constexpr float NODE_HEIGHT = 40.0f;
-static constexpr float PIN_RADIUS = 5.0f;
-static constexpr float PIN_SPACING = 16.0f;
+static struct {
+    // Layout
+    float node_min_width  = 80.0f;
+    float node_height     = 40.0f;
+    float pin_radius      = 5.0f;
+    float pin_spacing     = 16.0f;
+    float node_rounding   = 4.0f;
+    float grid_step       = 20.0f;
 
-static constexpr ImU32 COL_BG        = IM_COL32(30, 30, 40, 255);
-static constexpr ImU32 COL_GRID      = IM_COL32(50, 50, 60, 255);
-static constexpr ImU32 COL_NODE      = IM_COL32(50, 55, 75, 220);
-static constexpr ImU32 COL_NODE_SEL  = IM_COL32(80, 90, 130, 255);
-static constexpr ImU32 COL_NODE_ERR  = IM_COL32(130, 40, 40, 220);
-static constexpr ImU32 COL_TEXT      = IM_COL32(220, 220, 220, 255);
-static constexpr ImU32 COL_PIN_DATA  = IM_COL32(100, 200, 100, 255);
-static constexpr ImU32 COL_PIN_BANG  = IM_COL32(255, 200, 80, 255);
-static constexpr ImU32 COL_PIN_LAMBDA= IM_COL32(180, 130, 255, 255);
-static constexpr ImU32 COL_LINK      = IM_COL32(200, 200, 100, 200);
+    // Thickness
+    float wire_thickness      = 2.5f;
+    float node_border         = 1.0f;   // implicit from AddRect
+    float highlight_offset    = 2.0f;
+    float highlight_thickness = 2.0f;
+    float add_pin_line        = 1.5f;
+
+    // Hit testing
+    float pin_hit_radius_mul = 2.5f;
+
+    // Canvas colors
+    ImU32 col_bg          = IM_COL32(30, 30, 40, 255);
+    ImU32 col_grid        = IM_COL32(50, 50, 60, 255);
+
+    // Node colors
+    ImU32 col_node        = IM_COL32(50, 55, 75, 220);
+    ImU32 col_node_sel    = IM_COL32(80, 90, 130, 255);
+    ImU32 col_node_err    = IM_COL32(130, 40, 40, 220);
+    ImU32 col_node_border = IM_COL32(80, 80, 100, 255);
+    ImU32 col_err_border  = IM_COL32(255, 80, 80, 255);
+    ImU32 col_text        = IM_COL32(220, 220, 220, 255);
+
+    // Pin colors
+    ImU32 col_pin_data    = IM_COL32(100, 200, 100, 255);
+    ImU32 col_pin_bang    = IM_COL32(255, 200, 80, 255);
+    ImU32 col_pin_lambda  = IM_COL32(180, 130, 255, 255);
+    ImU32 col_pin_hover   = IM_COL32(255, 255, 255, 255);
+    ImU32 col_add_pin     = IM_COL32(120, 120, 140, 180);
+    ImU32 col_add_pin_fg  = IM_COL32(200, 200, 220, 220);
+    ImU32 col_opt_pin_fg  = IM_COL32(30, 30, 40, 255);
+
+    // Wire colors
+    ImU32 col_wire        = IM_COL32(200, 200, 100, 200);
+    ImU32 col_wire_named  = IM_COL32(200, 200, 100, 120);
+    ImU32 col_wire_lambda = IM_COL32(180, 130, 255, 200);
+
+    // Net label colors
+    ImU32 col_label_bg    = IM_COL32(30, 30, 40, 200);
+    ImU32 col_label_text  = IM_COL32(180, 220, 255, 255);
+} S;
 
 // ─── Helpers ───
 
@@ -43,10 +77,10 @@ struct NodeLayout {
     float zoom;
 
     ImVec2 input_pin_pos(int i) const {
-        return {pos.x + (i + 0.5f) * PIN_SPACING * zoom, pos.y};
+        return {pos.x + (i + 0.5f) * S.pin_spacing * zoom, pos.y};
     }
     ImVec2 output_pin_pos(int i) const {
-        return {pos.x + (i + 0.5f) * PIN_SPACING * zoom, pos.y + height};
+        return {pos.x + (i + 0.5f) * S.pin_spacing * zoom, pos.y + height};
     }
     ImVec2 lambda_grab_pos() const {
         return {pos.x, pos.y + height * 0.5f};
@@ -81,10 +115,10 @@ static NodeLayout compute_node_layout(const FlowNodeBuilder& node, ImVec2 canvas
         else num_out = std::max(1, args_count);
     }
 
-    float pin_w_top = std::max(0, num_in) * PIN_SPACING * zoom;
-    float pin_w_bot = std::max(0, num_out) * PIN_SPACING * zoom;
-    float node_w = std::max({NODE_MIN_WIDTH * zoom, text_w, pin_w_top, pin_w_bot});
-    float node_h = NODE_HEIGHT * zoom;
+    float pin_w_top = std::max(0, num_in) * S.pin_spacing * zoom;
+    float pin_w_bot = std::max(0, num_out) * S.pin_spacing * zoom;
+    float node_w = std::max({S.node_min_width * zoom, text_w, pin_w_top, pin_w_bot});
+    float node_h = S.node_height * zoom;
 
     ImVec2 pos = {canvas_origin.x + node.position.x * zoom,
                   canvas_origin.y + node.position.y * zoom};
@@ -95,9 +129,9 @@ static NodeLayout compute_node_layout(const FlowNodeBuilder& node, ImVec2 canvas
 static ImU32 pin_color(PortKind2 kind) {
     switch (kind) {
     case PortKind2::BangTrigger:
-    case PortKind2::BangNext: return COL_PIN_BANG;
-    case PortKind2::Lambda:   return COL_PIN_LAMBDA;
-    default:                  return COL_PIN_DATA;
+    case PortKind2::BangNext: return S.col_pin_bang;
+    case PortKind2::Lambda:   return S.col_pin_lambda;
+    default:                  return S.col_pin_data;
     }
 }
 
@@ -147,17 +181,17 @@ void Editor2Pane::draw() {
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
     // Background
-    dl->AddRectFilled(canvas_p0, v2add(canvas_p0, canvas_sz), COL_BG);
+    dl->AddRectFilled(canvas_p0, v2add(canvas_p0, canvas_sz), S.col_bg);
 
     ImVec2 canvas_origin = v2add(canvas_p0, canvas_offset_);
 
     // Grid
-    float grid_step = 20.0f * canvas_zoom_;
+    float grid_step = S.grid_step * canvas_zoom_;
     if (grid_step > 5.0f) {
         for (float x = fmodf(canvas_offset_.x, grid_step); x < canvas_sz.x; x += grid_step)
-            dl->AddLine({canvas_p0.x + x, canvas_p0.y}, {canvas_p0.x + x, canvas_p0.y + canvas_sz.y}, COL_GRID);
+            dl->AddLine({canvas_p0.x + x, canvas_p0.y}, {canvas_p0.x + x, canvas_p0.y + canvas_sz.y}, S.col_grid);
         for (float y = fmodf(canvas_offset_.y, grid_step); y < canvas_sz.y; y += grid_step)
-            dl->AddLine({canvas_p0.x, canvas_p0.y + y}, {canvas_p0.x + canvas_sz.x, canvas_p0.y + y}, COL_GRID);
+            dl->AddLine({canvas_p0.x, canvas_p0.y + y}, {canvas_p0.x + canvas_sz.x, canvas_p0.y + y}, S.col_grid);
     }
 
     // Clip
@@ -214,14 +248,14 @@ void Editor2Pane::draw() {
             auto* src_nt = find_node_type2(src_node_ptr->type_id);
             auto src_layout = compute_node_layout(*src_node_ptr, canvas_origin, canvas_zoom_);
             ImVec2 to = dst_layout.input_pin_pos(dst_pin);
-            float th = 2.5f * canvas_zoom_;
+            float th = S.wire_thickness * canvas_zoom_;
 
             ImVec2 from;
             if (is_lambda) {
                 from = src_layout.lambda_grab_pos();
                 float dx = std::max(std::abs(to.x - from.x) * 0.5f, 30.0f * canvas_zoom_);
                 float dy = std::max(std::abs(to.y - from.y) * 0.5f, 30.0f * canvas_zoom_);
-                ImU32 col = IM_COL32(180, 130, 255, 200);
+                ImU32 col = S.col_wire_lambda;
                 dl->AddBezierCubic(from, {from.x - dx, from.y}, {to.x, to.y - dy}, to, col, th);
             } else {
                 bool is_side_bang = src_nt && src_nt->is_flow() &&
@@ -232,11 +266,11 @@ void Editor2Pane::draw() {
                     from = {src_layout.pos.x + src_layout.width, src_layout.pos.y + src_layout.height * 0.5f};
                     float dx = std::max(std::abs(to.x - from.x) * 0.5f, 30.0f * canvas_zoom_);
                     float dy = std::max(std::abs(to.y - from.y) * 0.5f, 30.0f * canvas_zoom_);
-                    ImU32 col = named ? IM_COL32(200, 200, 100, 120) : COL_LINK;
+                    ImU32 col = named ? S.col_wire_named : S.col_wire;
                     dl->AddBezierCubic(from, {from.x + dx, from.y}, {to.x, to.y - dy}, to, col, th);
                 } else {
                     from = src_layout.output_pin_pos(source_pin);
-                    ImU32 col = named ? IM_COL32(200, 200, 100, 120) : COL_LINK;
+                    ImU32 col = named ? S.col_wire_named : S.col_wire;
                     float dy = std::max(std::abs(to.y - from.y) * 0.5f, 30.0f * canvas_zoom_);
                     dl->AddBezierCubic(from, {from.x, from.y + dy}, {to.x, to.y - dy}, to, col, th);
                 }
@@ -253,8 +287,8 @@ void Editor2Pane::draw() {
                     float cx = mid.x - tw * 0.5f;
                     float cy = mid.y - tth * 0.5f;
                     dl->AddRectFilled({cx - 3, cy - 1}, {cx + tw + 3, cy + tth + 1},
-                                      IM_COL32(30, 30, 40, 200), 3.0f);
-                    dl->AddText(nullptr, font_size, {cx, cy}, IM_COL32(180, 220, 255, 255), net_id.c_str());
+                                      S.col_label_bg, S.node_rounding);
+                    dl->AddText(nullptr, font_size, {cx, cy}, S.col_label_text, net_id.c_str());
                 }
             }
         };
@@ -378,9 +412,9 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
         if (is_error) {
             // Error: red box
             dl->AddRectFilled(layout.pos, {layout.pos.x + layout.width, layout.pos.y + layout.height},
-                              COL_NODE_ERR, 4.0f * canvas_zoom_);
+                              S.col_node_err, S.node_rounding * canvas_zoom_);
             dl->AddRect(layout.pos, {layout.pos.x + layout.width, layout.pos.y + layout.height},
-                        IM_COL32(255, 80, 80, 255), 4.0f * canvas_zoom_);
+                        S.col_err_border, S.node_rounding * canvas_zoom_);
         }
         // Label: no box at all
 
@@ -389,7 +423,7 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
             float tw = text_sz.x * canvas_zoom_;
             float cx = layout.pos.x + (layout.width - tw) * 0.5f;
             float cy = layout.pos.y + (layout.height - font_size) * 0.5f;
-            dl->AddText(nullptr, font_size, {cx, cy}, COL_TEXT, display.c_str());
+            dl->AddText(nullptr, font_size, {cx, cy}, S.col_text, display.c_str());
         }
         return; // no pins for special nodes
     }
@@ -402,11 +436,11 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
     bool selected = selected_nodes_.count(id);
     bool has_error = !node.error.empty();
 
-    ImU32 col = has_error ? COL_NODE_ERR : (selected ? COL_NODE_SEL : COL_NODE);
+    ImU32 col = has_error ? S.col_node_err : (selected ? S.col_node_sel : S.col_node);
     dl->AddRectFilled(layout.pos, {layout.pos.x + layout.width, layout.pos.y + layout.height},
-                      col, 4.0f * canvas_zoom_);
+                      col, S.node_rounding * canvas_zoom_);
     dl->AddRect(layout.pos, {layout.pos.x + layout.width, layout.pos.y + layout.height},
-                IM_COL32(80, 80, 100, 255), 4.0f * canvas_zoom_);
+                S.col_node_border, S.node_rounding * canvas_zoom_);
 
     // Text
     float font_size = ImGui::GetFontSize() * canvas_zoom_;
@@ -415,12 +449,12 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
         float tw = text_sz.x * canvas_zoom_;
         float cx = layout.pos.x + (layout.width - tw) * 0.5f;
         float cy = layout.pos.y + (layout.height - font_size) * 0.5f;
-        dl->AddText(nullptr, font_size, {cx, cy}, COL_TEXT, display.c_str());
+        dl->AddText(nullptr, font_size, {cx, cy}, S.col_text, display.c_str());
     }
 
     // Draw input pins (top)
     // Pin order: parsed_args ArgNet2 (inputs merged first), then va_args ArgNet2, then remaps
-    float pr = PIN_RADIUS * canvas_zoom_;
+    float pr = S.pin_radius * canvas_zoom_;
     bool has_va = nt->va_args != nullptr;
     auto count_net_args_in = [](const ParsedArgs2* pa) -> int {
         if (!pa) return 0;
@@ -436,11 +470,11 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
 
         // Draw the "add more" diamond at the boundary between va_args and remaps
         if (has_va && i == add_pin_pos) {
-            ImU32 pc = IM_COL32(120, 120, 140, 180);
+            ImU32 pc = S.col_add_pin;
             dl->AddQuadFilled({pp.x, pp.y - pr}, {pp.x + pr, pp.y}, {pp.x, pp.y + pr}, {pp.x - pr, pp.y}, pc);
             float cr = pr * 0.5f;
-            ImU32 tc = IM_COL32(200, 200, 220, 220);
-            float lth = 1.5f * canvas_zoom_;
+            ImU32 tc = S.col_add_pin_fg;
+            float lth = S.add_pin_line * canvas_zoom_;
             dl->AddLine({pp.x - cr, pp.y}, {pp.x + cr, pp.y}, tc, lth);
             dl->AddLine({pp.x, pp.y - cr}, {pp.x, pp.y + cr}, tc, lth);
             continue;
@@ -475,7 +509,7 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
                 float scale = font_sz / ImGui::GetFontSize();
                 dl->AddText(nullptr, font_sz,
                     {pp.x - ts.x * scale * 0.5f, pp.y - ts.y * scale * 0.5f},
-                    IM_COL32(30, 30, 40, 255), "?");
+                    S.col_opt_pin_fg, "?");
             }
         } else {
             dl->AddCircleFilled(pp, pr, pc);
@@ -500,7 +534,7 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
     if (nt->is_flow()) {
         // Lambda grab handle (left-pointing triangle, middle-left)
         ImVec2 gp = layout.lambda_grab_pos();
-        ImU32 lc = IM_COL32(180, 130, 255, 255);
+        ImU32 lc = S.col_pin_lambda;
         dl->AddTriangleFilled(
             {gp.x + pr, gp.y - pr},
             {gp.x - pr, gp.y},
@@ -509,16 +543,16 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
 
         // Side-bang (square, middle-right)
         ImVec2 bp = {layout.pos.x + layout.width, layout.pos.y + layout.height * 0.5f};
-        dl->AddRectFilled({bp.x - pr, bp.y - pr}, {bp.x + pr, bp.y + pr}, COL_PIN_BANG);
+        dl->AddRectFilled({bp.x - pr, bp.y - pr}, {bp.x + pr, bp.y + pr}, S.col_pin_bang);
     }
 
     // Pin hover: highlight + tooltip
     ImVec2 mouse = ImGui::GetMousePos();
-    float hit_r = pr * 2.5f;
+    float hit_r = pr * S.pin_hit_radius_mul;
     auto dist2 = [](ImVec2 a, ImVec2 b) { return (a.x-b.x)*(a.x-b.x) + (a.y-b.y)*(a.y-b.y); };
     float hit_r2 = hit_r * hit_r;
-    float ho = 2.0f * canvas_zoom_; // highlight outline offset
-    ImU32 COL_HOVER = IM_COL32(255, 255, 255, 255);
+    float ho = S.highlight_offset * canvas_zoom_;
+    ImU32 COL_HOVER = S.col_pin_hover;
 
     // Helper to get input pin name
     auto get_input_pin_name = [&](int i) -> const char* {
@@ -553,22 +587,23 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
         return PinShape2::Circle;
     };
 
+    float ht = S.highlight_thickness;
     auto draw_highlight = [&](ImVec2 pos, PinShape2 shape) {
         switch (shape) {
         case PinShape2::Circle:
-            dl->AddCircle(pos, pr + ho, COL_HOVER, 0, 2.0f);
+            dl->AddCircle(pos, pr + ho, COL_HOVER, 0, ht);
             break;
         case PinShape2::Square:
-            dl->AddRect({pos.x - pr - ho, pos.y - pr - ho}, {pos.x + pr + ho, pos.y + pr + ho}, COL_HOVER, 0, 0, 2.0f);
+            dl->AddRect({pos.x - pr - ho, pos.y - pr - ho}, {pos.x + pr + ho, pos.y + pr + ho}, COL_HOVER, 0, 0, ht);
             break;
         case PinShape2::Diamond:
-            dl->AddQuad({pos.x, pos.y - pr - ho}, {pos.x + pr + ho, pos.y}, {pos.x, pos.y + pr + ho}, {pos.x - pr - ho, pos.y}, COL_HOVER, 2.0f);
+            dl->AddQuad({pos.x, pos.y - pr - ho}, {pos.x + pr + ho, pos.y}, {pos.x, pos.y + pr + ho}, {pos.x - pr - ho, pos.y}, COL_HOVER, ht);
             break;
         case PinShape2::TriangleDown:
-            dl->AddTriangle({pos.x - pr - ho, pos.y - pr - ho}, {pos.x + pr + ho, pos.y - pr - ho}, {pos.x, pos.y + pr + ho}, COL_HOVER, 2.0f);
+            dl->AddTriangle({pos.x - pr - ho, pos.y - pr - ho}, {pos.x + pr + ho, pos.y - pr - ho}, {pos.x, pos.y + pr + ho}, COL_HOVER, ht);
             break;
         case PinShape2::TriangleLeft:
-            dl->AddTriangle({pos.x + pr + ho, pos.y - pr - ho}, {pos.x - pr - ho, pos.y}, {pos.x + pr + ho, pos.y + pr + ho}, COL_HOVER, 2.0f);
+            dl->AddTriangle({pos.x + pr + ho, pos.y - pr - ho}, {pos.x - pr - ho, pos.y}, {pos.x + pr + ho, pos.y + pr + ho}, COL_HOVER, ht);
             break;
         }
     };
