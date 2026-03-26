@@ -262,7 +262,7 @@ static const NodeType2 NODE_TYPES2[] = {
         .input_ports = P2_SELECT_IN,
         .num_inputs = 3,
         .output_ports = P2_NEXT_RESULT,
-        .num_outputs = 1
+        .num_outputs = 2,
     },
     {
         .type_id = NodeTypeID::New,
@@ -272,7 +272,7 @@ static const NodeType2 NODE_TYPES2[] = {
         .num_inputs = 1,
         .input_ports_va_args = &P2_VA_FIELD,
         .output_ports = P2_NEXT_RESULT,
-        .num_outputs = 1,
+        .num_outputs = 2,
     },
     {
         .type_id = NodeTypeID::Dup,
@@ -281,7 +281,7 @@ static const NodeType2 NODE_TYPES2[] = {
         .input_ports = P2_VALUE,
         .num_inputs = 1,
         .output_ports = P2_NEXT_RESULT,
-        .num_outputs = 1
+        .num_outputs = 2,
     },
     {
         .type_id = NodeTypeID::Str,
@@ -290,14 +290,14 @@ static const NodeType2 NODE_TYPES2[] = {
         .input_ports = P2_VALUE,
         .num_inputs = 1,
         .output_ports = P2_NEXT_RESULT,
-        .num_outputs = 1
+        .num_outputs = 2,
     },
     {
         .type_id = NodeTypeID::Void,
         .name = "void",
         .desc = "Void result",
         .output_ports = P2_NEXT_RESULT,
-        .num_outputs = 1
+        .num_outputs = 2,
     },
     {
         .kind = NodeKind2::Banged,
@@ -386,7 +386,7 @@ static const NodeType2 NODE_TYPES2[] = {
         .num_inputs = 1,
         .input_ports_va_args = &P2_VA_ARG,
         .output_ports = P2_NEXT_RESULT,
-        .num_outputs = 1,
+        .num_outputs = 2,
     },
     {
         .kind = NodeKind2::Banged,
@@ -406,7 +406,7 @@ static const NodeType2 NODE_TYPES2[] = {
         .input_ports = P2_ERASE_IN,
         .num_inputs = 2,
         .output_ports = P2_NEXT_RESULT,
-        .num_outputs = 1
+        .num_outputs = 2,
     },
     {
         .kind = NodeKind2::Banged,
@@ -423,7 +423,7 @@ static const NodeType2 NODE_TYPES2[] = {
         .input_ports = P2_APPEND_IN,
         .num_inputs = 2,
         .output_ports = P2_NEXT_RESULT,
-        .num_outputs = 1
+        .num_outputs = 2,
     },
     {
         .kind = NodeKind2::Banged,
@@ -532,7 +532,7 @@ static const NodeType2 NODE_TYPES2[] = {
         .input_ports = P2_VALUE,
         .num_inputs = 1,
         .output_ports = P2_NEXT_RESULT,
-        .num_outputs = 1
+        .num_outputs = 2,
     },
     {
         .type_id = NodeTypeID::Lock,
@@ -572,7 +572,7 @@ static const NodeType2 NODE_TYPES2[] = {
         .input_ports = P2_VALUE,
         .num_inputs = 1,
         .output_ports = P2_NEXT_RESULT,
-        .num_outputs = 1
+        .num_outputs = 2
     },
     {
         .kind = NodeKind2::Special,
@@ -587,7 +587,7 @@ static const NodeType2 NODE_TYPES2[] = {
         .input_ports = P2_VALUE,
         .num_inputs = 1,
         .output_ports = P2_NEXT_RESULT,
-        .num_outputs = 1
+        .num_outputs = 2,
     },
     {
         .kind = NodeKind2::Special,
