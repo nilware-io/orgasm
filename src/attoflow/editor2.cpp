@@ -84,10 +84,13 @@ static float point_to_bezier_dist(ImVec2 p, ImVec2 p0, ImVec2 p1, ImVec2 p2, ImV
 
 // Stored wire info for hover hit-testing
 struct WireInfo {
-    ImVec2 p0, p1, p2, p3;   // bezier control points
-    NodeId src_id, dst_id;    // source and destination node IDs
-    NodeId net_id;            // net name
-    bool is_lambda = false;
+    BuilderEntryPtr entry;            // the net entry (null for lambda wires)
+
+    ImVec2 p0, p1, p2, p3;       // bezier control points
+    NodeId src_id, dst_id;        // source and destination node IDs
+    NodeId net_id;                // net name
+
+    bool is_lambda() const { return entry->is(IdCategory::Node); };
 };
 
 static inline ImVec2 v2add(ImVec2 a, ImVec2 b) { return {a.x + b.x, a.y + b.y}; }
@@ -360,7 +363,7 @@ void Editor2Pane::draw() {
             }
 
             dl->AddBezierCubic(from, cp1, cp2, to, wire_col, th);
-            drawn_wires.push_back({from, cp1, cp2, to, src_node->id(), dst_id, net_id, is_lambda});
+            drawn_wires.push_back({ entry, from, cp1, cp2, to, src_node->id(), dst_id, net_id});
 
             // Label for named nets
             if (named) {
@@ -448,7 +451,7 @@ void Editor2Pane::draw() {
                                    best_wire_info->p2, best_wire_info->p3, S.col_pin_hover, th);
                 ImGui::BeginTooltip();
                 ImGui::SetWindowFontScale(S.tooltip_scale);
-                if (best_wire_info->is_lambda)
+                if (best_wire_info->is_lambda())
                     ImGui::Text("lambda: %s", best_wire_info->src_id.c_str());
                 else
                     ImGui::Text("net: %s", best_wire_info->net_id.c_str());
