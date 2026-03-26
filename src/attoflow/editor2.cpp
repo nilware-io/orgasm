@@ -59,6 +59,9 @@ static struct {
     // Net label colors
     ImU32 col_label_bg    = IM_COL32(30, 30, 40, 200);
     ImU32 col_label_text  = IM_COL32(180, 220, 255, 255);
+
+    // Tooltip
+    float tooltip_scale   = 1.0f;
 } S;
 
 // ─── Helpers ───
@@ -664,6 +667,7 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
         if (dist2(mouse, pp) < hit_r2) {
             draw_highlight(pp, pm.is_add_diamond(i) ? PinShape2::Diamond : get_input_pin_shape(i));
             ImGui::BeginTooltip();
+            ImGui::SetWindowFontScale(S.tooltip_scale);
             if (pm.is_add_diamond(i)) {
                 const char* va_name = nt->va_args ? nt->va_args->name : "arg";
                 ImGui::Text("add %s", va_name);
@@ -684,6 +688,7 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
                 draw_highlight(pp, kind == PortKind2::BangNext ? PinShape2::Square : PinShape2::Circle);
                 const char* name = (nt->output_ports && i < nt->num_outputs) ? nt->output_ports[i].name : "out";
                 ImGui::BeginTooltip();
+                ImGui::SetWindowFontScale(S.tooltip_scale);
                 ImGui::Text("%s", name);
                 ImGui::EndTooltip();
                 pin_hovered = true;
@@ -697,6 +702,7 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
         if (dist2(mouse, gp) < hit_r2) {
             draw_highlight(gp, PinShape2::TriangleLeft);
             ImGui::BeginTooltip();
+            ImGui::SetWindowFontScale(S.tooltip_scale);
             ImGui::Text("as_lambda");
             ImGui::EndTooltip();
             pin_hovered = true;
@@ -708,6 +714,7 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
         if (dist2(mouse, bp) < hit_r2) {
             draw_highlight(bp, PinShape2::Square);
             ImGui::BeginTooltip();
+            ImGui::SetWindowFontScale(S.tooltip_scale);
             ImGui::Text("post_bang");
             ImGui::EndTooltip();
             pin_hovered = true;
@@ -719,6 +726,7 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
         mouse.x >= layout.pos.x && mouse.x <= layout.pos.x + layout.width &&
         mouse.y >= layout.pos.y && mouse.y <= layout.pos.y + layout.height) {
         ImGui::BeginTooltip();
+        ImGui::SetWindowFontScale(S.tooltip_scale);
         ImGui::Text("id: %s", id.c_str());
         if (node.parsed_args) {
             ImGui::Text("parsed_args (%d):", (int)node.parsed_args->size());
