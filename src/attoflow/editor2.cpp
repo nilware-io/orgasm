@@ -101,7 +101,7 @@ struct PinMapping {
 
     static PinMapping build(const FlowNodeBuilderPtr& node, const NodeType2* nt) {
         PinMapping m;
-        m.has_va = nt && nt->va_args != nullptr;
+        m.has_va = nt && nt->input_ports_va_args != nullptr;
         int parsed_size = node->parsed_args ? (int)node->parsed_args->size() : 0;
 
         // Base args: track which parsed_args indices are ArgNet2
@@ -147,7 +147,7 @@ struct PinMapping {
     bool is_base(int pin) const { return pin < base_count; }
     bool is_absent_optional(int pin) const { return pin < base_count && pin_to_port[pin] <= -3000; }
     int absent_port_index(int pin) const { return -(pin_to_port[pin] + 3000); }
-    bool is_va(int pin) const { return pin >= base_count && pin < base_count + va_count; }
+    bool is_input_va(int pin) const { return pin >= base_count && pin < base_count + va_count; }
     bool is_add_diamond(int pin) const { return pin == add_pin_pos; }
     bool is_remap(int pin) const { return pin >= base_count + va_count + (has_va ? 1 : 0); }
     int port_index(int pin) const { return pin_to_port[pin]; }
@@ -386,7 +386,7 @@ void Editor2Pane::draw() {
                     if (auto an = (*dst_node->parsed_args)[port]->as_net())
                         draw_wire_to_pin(i, an->second(), an->first());
                 }
-            } else if (dst_pm.is_va(i)) {
+            } else if (dst_pm.is_input_va(i)) {
                 int va_idx = -(dst_pm.port_index(i) + 1);
                 if (dst_node->parsed_va_args && va_idx < (int)dst_node->parsed_va_args->size()) {
                     if (auto an = (*dst_node->parsed_va_args)[va_idx]->as_net())
@@ -659,7 +659,7 @@ void Editor2Pane::draw_node(ImDrawList* dl, const FlowNodeBuilderPtr& node,
         }
 
         PortKind2 kind = PortKind2::Data;
-        bool is_va = pm.is_va(i);
+        bool is_input_va = pm.is_input_va(i);
         bool is_optional = false;
 
         if (pm.is_absent_optional(i)) {
@@ -672,8 +672,8 @@ void Editor2Pane::draw_node(ImDrawList* dl, const FlowNodeBuilderPtr& node,
                 kind = pd->kind;
                 is_optional = pd->optional;
             }
-        } else if (is_va) {
-            kind = nt->va_args ? nt->va_args->kind : PortKind2::Data;
+        } else if (is_input_va) {
+            kind = nt->input_ports_va_args ? nt->input_ports_va_args->kind : PortKind2::Data;
         }
         // remaps are always Data
 
@@ -682,7 +682,7 @@ void Editor2Pane::draw_node(ImDrawList* dl, const FlowNodeBuilderPtr& node,
             dl->AddRectFilled({pp.x - pr, pp.y - pr}, {pp.x + pr, pp.y + pr}, pc);
         } else if (kind == PortKind2::Lambda) {
             dl->AddTriangleFilled({pp.x - pr, pp.y - pr}, {pp.x + pr, pp.y - pr}, {pp.x, pp.y + pr}, pc);
-        } else if (is_va) {
+        } else if (is_input_va) {
             dl->AddQuadFilled({pp.x, pp.y - pr}, {pp.x + pr, pp.y}, {pp.x, pp.y + pr}, {pp.x - pr, pp.y}, pc);
         } else if (is_optional) {
             dl->AddQuadFilled({pp.x, pp.y - pr}, {pp.x + pr, pp.y}, {pp.x, pp.y + pr}, {pp.x - pr, pp.y}, pc);
@@ -771,7 +771,7 @@ void Editor2Pane::draw_node(ImDrawList* dl, const FlowNodeBuilderPtr& node,
                 int port = pm.port_index(i);
                 if (node->parsed_args && port < node->parsed_args->size())
                     pin_arg = (*node->parsed_args)[port];
-            } else if (pm.is_va(i)) {
+            } else if (pm.is_input_va(i)) {
                 int vi = -(pm.port_index(i) + 1);
                 if (node->parsed_va_args && vi < node->parsed_va_args->size())
                     pin_arg = (*node->parsed_va_args)[vi];
@@ -781,7 +781,7 @@ void Editor2Pane::draw_node(ImDrawList* dl, const FlowNodeBuilderPtr& node,
             }
             if (pin_arg == hovered_pin) {
                 ImVec2 pp = layout.input_pin_pos(i);
-                auto shape = pm.is_va(i) ? PinShape2::Diamond : PinShape2::Circle;
+                auto shape = pm.is_input_va(i) ? PinShape2::Diamond : PinShape2::Circle;
                 if (pm.is_base(i)) {
                     if (auto* pd = nt->input_port(pm.port_index(i))) {
                         if (pd->kind == PortKind2::BangTrigger) shape = PinShape2::Square;
@@ -949,7 +949,7 @@ Editor2Pane::HoverItem Editor2Pane::detect_hover(
                     int port = pm.port_index(i);
                     if (node->parsed_args && port < node->parsed_args->size())
                         pin_arg = (*node->parsed_args)[port];
-                } else if (pm.is_va(i)) {
+                } else if (pm.is_input_va(i)) {
                     int vi = -(pm.port_index(i) + 1);
                     if (node->parsed_va_args && vi < node->parsed_va_args->size())
                         pin_arg = (*node->parsed_va_args)[vi];

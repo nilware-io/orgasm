@@ -263,6 +263,7 @@ struct FlowNodeBuilder: BuilderEntry {
     std::shared_ptr<ParsedArgs2> parsed_va_args;
     Remaps remaps;
     Outputs outputs;
+    Outputs outputs_va_args;
     Vec2 position = {0, 0};
     bool shadow = false;
     bool is_the_empty = false;          // true for the special $empty sentinel node

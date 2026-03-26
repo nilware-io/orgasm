@@ -1043,7 +1043,7 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
         if (!entry->is(IdCategory::Node)) continue;
         auto& node = *entry->as_Node();
         auto* nt = find_node_type2(node.type_id);
-        if (!nt || !nt->va_args || !node.parsed_args) continue;
+        if (!nt || !nt->input_ports_va_args || !node.parsed_args) continue;
 
         // Split at total descriptor input count (required + optional)
         int fixed_args = nt->total_inputs();
