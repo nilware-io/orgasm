@@ -283,13 +283,13 @@ void Editor2Pane::draw() {
             int source_pin = 0;
 
             if (auto net = entry->as_Net()) {
-                if (net->is_the_unconnected) return;
-                auto src_ptr = net->source.lock();
+                if (net->is_the_unconnected()) return;
+                auto src_ptr = net->source().lock();
                 src_node = src_ptr ? src_ptr->as_Node() : nullptr;
                 if (!src_node) return;
-                named = !net->auto_wire;
+                named = !net->auto_wire();
                 for (int k = 0; k < (int)src_node->outputs.size(); k++) {
-                    if (src_node->outputs[k].second == entry) {
+                    if (src_node->outputs[k].second() == entry) {
                         source_pin = k;
                         break;
                     }
@@ -358,18 +358,18 @@ void Editor2Pane::draw() {
                 int port = dst_pm.port_index(i);
                 if (dst_node->parsed_args && port < (int)dst_node->parsed_args->size()) {
                     if (auto* an = std::get_if<ArgNet2>(&(*dst_node->parsed_args)[port]))
-                        draw_wire_to_pin(i, an->second, an->first);
+                        draw_wire_to_pin(i, an->second(), an->first());
                 }
             } else if (dst_pm.is_va(i)) {
                 int va_idx = -(dst_pm.port_index(i) + 1);
                 if (dst_node->parsed_va_args && va_idx < (int)dst_node->parsed_va_args->size()) {
                     if (auto* an = std::get_if<ArgNet2>(&(*dst_node->parsed_va_args)[va_idx]))
-                        draw_wire_to_pin(i, an->second, an->first);
+                        draw_wire_to_pin(i, an->second(), an->first());
                 }
             } else if (dst_pm.is_remap(i)) {
                 int ri = dst_pm.remap_index(i);
                 if (ri < (int)dst_node->remaps.size())
-                    draw_wire_to_pin(i, dst_node->remaps[ri].second, dst_node->remaps[ri].first);
+                    draw_wire_to_pin(i, dst_node->remaps[ri].second(), dst_node->remaps[ri].first());
             }
         }
     }
@@ -502,8 +502,8 @@ void Editor2Pane::draw_node(ImDrawList* dl, const FlowNodeBuilderPtr& node,
         std::string display;
         if (node->parsed_args && !node->parsed_args->empty()) {
             auto& a = (*node->parsed_args)[0];
-            if (auto* s = std::get_if<ArgString2>(&a)) display = s->value;
-            else if (auto* e = std::get_if<ArgExpr2>(&a)) display = e->expr;
+            if (auto* s = std::get_if<ArgString2>(&a)) display = s->value();
+            else if (auto* e = std::get_if<ArgExpr2>(&a)) display = e->expr();
             else display = node->args_str();
         }
 
@@ -534,7 +534,7 @@ void Editor2Pane::draw_node(ImDrawList* dl, const FlowNodeBuilderPtr& node,
     std::string args = node->args_str();
     if (!args.empty()) display += " " + args;
 
-    bool selected = selected_nodes_.count(node->id);
+    bool selected = selected_nodes_.count(node->id());
     bool has_error = !node->error.empty();
 
     ImU32 col = has_error ? S.col_node_err : (selected ? S.col_node_sel : S.col_node);
@@ -773,19 +773,19 @@ void Editor2Pane::draw_node(ImDrawList* dl, const FlowNodeBuilderPtr& node,
         mouse.y >= layout.pos.y && mouse.y <= layout.pos.y + layout.height) {
         ImGui::BeginTooltip();
         ImGui::SetWindowFontScale(S.tooltip_scale);
-        ImGui::Text("id: %s", node->id.c_str());
+        ImGui::Text("id: %s", node->id().c_str());
         if (node->parsed_args) {
             ImGui::Text("parsed_args (%d):", (int)node->parsed_args->size());
             for (int i = 0; i < (int)node->parsed_args->size(); i++) {
                 auto& a = (*node->parsed_args)[i];
                 if (auto* n = std::get_if<ArgNet2>(&a))
-                    ImGui::Text("  [%d] net: %s", i, n->first.c_str());
+                    ImGui::Text("  [%d] net: %s", i, n->first().c_str());
                 else if (auto* e = std::get_if<ArgExpr2>(&a))
-                    ImGui::Text("  [%d] expr: %s", i, e->expr.c_str());
+                    ImGui::Text("  [%d] expr: %s", i, e->expr().c_str());
                 else if (auto* s = std::get_if<ArgString2>(&a))
-                    ImGui::Text("  [%d] str: %s", i, s->value.c_str());
+                    ImGui::Text("  [%d] str: %s", i, s->value().c_str());
                 else if (auto* v = std::get_if<ArgNumber2>(&a))
-                    ImGui::Text("  [%d] num: %g", i, v->value);
+                    ImGui::Text("  [%d] num: %g", i, v->value());
             }
         }
         if (node->parsed_va_args && !node->parsed_va_args->empty()) {
@@ -793,19 +793,19 @@ void Editor2Pane::draw_node(ImDrawList* dl, const FlowNodeBuilderPtr& node,
             for (int i = 0; i < (int)node->parsed_va_args->size(); i++) {
                 auto& a = (*node->parsed_va_args)[i];
                 if (auto* n = std::get_if<ArgNet2>(&a))
-                    ImGui::Text("  [%d] net: %s", i, n->first.c_str());
+                    ImGui::Text("  [%d] net: %s", i, n->first().c_str());
                 else if (auto* e = std::get_if<ArgExpr2>(&a))
-                    ImGui::Text("  [%d] expr: %s", i, e->expr.c_str());
+                    ImGui::Text("  [%d] expr: %s", i, e->expr().c_str());
                 else if (auto* s = std::get_if<ArgString2>(&a))
-                    ImGui::Text("  [%d] str: %s", i, s->value.c_str());
+                    ImGui::Text("  [%d] str: %s", i, s->value().c_str());
                 else if (auto* v = std::get_if<ArgNumber2>(&a))
-                    ImGui::Text("  [%d] num: %g", i, v->value);
+                    ImGui::Text("  [%d] num: %g", i, v->value());
             }
         }
         if (!node->remaps.empty()) {
             ImGui::Text("remaps (%d):", (int)node->remaps.size());
             for (int i = 0; i < (int)node->remaps.size(); i++)
-                ImGui::Text("  $%d -> %s", i, node->remaps[i].first.c_str());
+                ImGui::Text("  $%d -> %s", i, node->remaps[i].first().c_str());
         }
         ImGui::EndTooltip();
     }

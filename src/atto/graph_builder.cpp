@@ -57,17 +57,49 @@ static std::vector<std::string> parse_toml_array(const std::string& val) {
     return result;
 }
 
+// ─── Dirty-tracked setters ───
+
+static void maybe_dirty(GraphBuilder* gb) { if (gb) gb->mark_dirty(); }
+static void maybe_dirty(const std::shared_ptr<GraphBuilder>& gb) { if (gb) gb->mark_dirty(); }
+
+void ArgNet2::id(const NodeId& v, GraphBuilder* gb)     { id_ = v; maybe_dirty(gb); }
+void ArgNet2::entry(std::shared_ptr<BuilderEntry> v, GraphBuilder* gb) { entry_ = std::move(v); maybe_dirty(gb); }
+void ArgNumber2::value(double v, GraphBuilder* gb)       { value_ = v; maybe_dirty(gb); }
+void ArgNumber2::is_float(bool v, GraphBuilder* gb)      { is_float_ = v; maybe_dirty(gb); }
+void ArgString2::value(const std::string& v, GraphBuilder* gb) { value_ = v; maybe_dirty(gb); }
+void ArgExpr2::expr(const std::string& v, GraphBuilder* gb)    { expr_ = v; maybe_dirty(gb); }
+
+// ─── ParsedArgs2 ───
+
+void ParsedArgs2::push_back(FlowArg2 arg)  { items_.push_back(std::move(arg)); maybe_dirty(owner); }
+void ParsedArgs2::pop_back()               { items_.pop_back(); maybe_dirty(owner); }
+void ParsedArgs2::resize(int n)            { items_.resize(n); maybe_dirty(owner); }
+void ParsedArgs2::insert(std::vector<FlowArg2>::iterator pos, FlowArg2 arg) { items_.insert(pos, std::move(arg)); maybe_dirty(owner); }
+void ParsedArgs2::clear()                  { items_.clear(); maybe_dirty(owner); }
+
+// ─── BuilderEntry ───
+
+void BuilderEntry::id(const NodeId& v) { id_ = v; mark_dirty(); }
+void BuilderEntry::mark_dirty() { maybe_dirty(owner_); }
+
+std::shared_ptr<FlowNodeBuilder> BuilderEntry::as_Node() {
+    return std::dynamic_pointer_cast<FlowNodeBuilder>(shared_from_this());
+}
+std::shared_ptr<NetBuilder> BuilderEntry::as_Net() {
+    return std::dynamic_pointer_cast<NetBuilder>(shared_from_this());
+}
+
 // ─── NetBuilder ───
 
 void NetBuilder::compact() {
-    destinations.erase(
-        std::remove_if(destinations.begin(), destinations.end(), [](auto& w) { return w.expired(); }),
-        destinations.end());
+    destinations().erase(
+        std::remove_if(destinations().begin(), destinations().end(), [](auto& w) { return w.expired(); }),
+        destinations().end());
 }
 
 bool NetBuilder::unused() {
     compact();
-    return source.expired() && destinations.empty();
+    return source().expired() && destinations().empty();
 }
 
 void NetBuilder::validate() const {
@@ -155,18 +187,18 @@ std::string reconstruct_args_str(const ParsedArgs2& args) {
         if (!result.empty()) result += " ";
         std::visit([&](auto& v) {
             using T = std::decay_t<decltype(v)>;
-            if constexpr (std::is_same_v<T, ArgNet2>) result += v.first;
+            if constexpr (std::is_same_v<T, ArgNet2>) result += v.first();
             else if constexpr (std::is_same_v<T, ArgNumber2>) {
-                if (v.is_float) {
+                if (v.is_float()) {
                     char buf[64];
-                    snprintf(buf, sizeof(buf), "%g", v.value);
+                    snprintf(buf, sizeof(buf), "%g", v.value());
                     result += buf;
                 } else {
-                    result += std::to_string((long long)v.value);
+                    result += std::to_string((long long)v.value());
                 }
             }
-            else if constexpr (std::is_same_v<T, ArgString2>) result += "\"" + v.value + "\"";
-            else if constexpr (std::is_same_v<T, ArgExpr2>) result += v.expr;
+            else if constexpr (std::is_same_v<T, ArgString2>) result += "\"" + v.value() + "\"";
+            else if constexpr (std::is_same_v<T, ArgExpr2>) result += v.expr();
         }, a);
     }
     return result;
@@ -190,20 +222,20 @@ std::string FlowNodeBuilder::args_str() const {
 // ─── GraphBuilder ───
 
 std::shared_ptr<FlowNodeBuilder> GraphBuilder::add_node(NodeId id, NodeTypeID type, std::shared_ptr<ParsedArgs2> args) {
-    auto nb = std::make_shared<FlowNodeBuilder>();
+    auto nb = std::make_shared<FlowNodeBuilder>(shared_from_this());
     nb->type_id = type;
     nb->parsed_args = std::move(args);
-    nb->id = id;
+    nb->id(id);
     entries[std::move(id)] = nb;
     return nb;
 }
 
 void GraphBuilder::ensure_unconnected() {
     if (entries.count("$unconnected")) return;
-    auto net = std::make_shared<NetBuilder>();
-    net->is_the_unconnected = true;
-    net->auto_wire = true;
-    net->id = "$unconnected";
+    auto net = std::make_shared<NetBuilder>(shared_from_this());
+    net->is_the_unconnected(true);
+    net->auto_wire(true);
+    net->id("$unconnected");
     entries["$unconnected"] = net;
 }
 
@@ -211,16 +243,15 @@ std::pair<NodeId, BuilderEntryPtr> GraphBuilder::find_or_create_net(const NodeId
     auto it = entries.find(name);
     if (it != entries.end()) {
         if (auto net = it->second->as_Net()) {
-            if (for_source && !net->source.expired())
+            if (for_source && !net->source().expired())
                 throw std::logic_error("find_or_create_net(\"" + name + "\"): net already has a source");
             return {it->first, it->second};
         }
-        // Exists as a node — don't overwrite
         return {it->first, nullptr};
     }
-    auto net = std::make_shared<NetBuilder>();
-    net->auto_wire = (name.size() >= 6 && name.substr(0, 6) == "$auto-");
-    net->id = name;
+    auto net = std::make_shared<NetBuilder>(shared_from_this());
+    net->auto_wire(name.size() >= 6 && name.substr(0, 6) == "$auto-");
+    net->id(name);
     entries[name] = net;
     return {entries.find(name)->first, net};
 }
@@ -245,7 +276,7 @@ NetBuilderPtr GraphBuilder::find_net(const NodeId& name) {
 void GraphBuilder::compact() {
     for (auto it = entries.begin(); it != entries.end(); ) {
         if (auto net = it->second->as_Net()) {
-            if (!net->is_the_unconnected && net->unused()) {
+            if (!net->is_the_unconnected() && net->unused()) {
                 it = entries.erase(it);
                 continue;
             }
@@ -304,7 +335,8 @@ FlowNodeBuilder& Deserializer::parse_or_error(
 
     if (auto* p = std::get_if<std::pair<NodeId, FlowNodeBuilder>>(&result)) {
         auto entry = std::make_shared<FlowNodeBuilder>(std::move(p->second));
-        entry->id = p->first;
+        entry->id(p->first);
+        entry->owner(gb);
         gb->entries[p->first] = entry;
         return *entry;
     }
@@ -315,12 +347,12 @@ FlowNodeBuilder& Deserializer::parse_or_error(
         if (!args_joined.empty()) args_joined += " ";
         args_joined += a;
     }
-    auto entry = std::make_shared<FlowNodeBuilder>();
+    auto entry = std::make_shared<FlowNodeBuilder>(gb);
     entry->type_id = NodeTypeID::Error;
     entry->parsed_args = std::make_shared<ParsedArgs2>();
     entry->parsed_args->push_back(ArgString2{type + " " + args_joined});
     entry->error = error_msg;
-    entry->id = id;
+    entry->id(id);
     gb->entries[id] = entry;
     return *entry;
 }
@@ -384,7 +416,7 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
             auto wire_output = [&](const std::string& net_name) -> ArgNet2 {
                 auto [resolved, net_ptr] = gb->find_or_create_net(net_name, true);
                 if (auto net = net_ptr ? net_ptr->as_Net() : nullptr)
-                    net->source = node_entry;
+                    net->source(node_entry);
                 return {resolved, net_ptr};
             };
 
@@ -484,12 +516,12 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
                 if (ptr) {
                     // If it's a net, register as destination
                     if (auto net = ptr->as_Net())
-                        net->destinations.push_back(node_entry);
+                        net->destinations().push_back(node_entry);
                     return {resolved_name, ptr};
                 }
                 // Not found yet — create as net
                 auto [id, net_ptr] = gb->find_or_create_net(resolved_name);
-                net_ptr->as_Net()->destinations.push_back(node_entry);
+                net_ptr->as_Net()->destinations().push_back(node_entry);
                 return {id, net_ptr};
             };
 
@@ -649,7 +681,7 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
                 if (net_name.empty()) continue;
                 auto [_, net_ptr] = gb->find_or_create_net(net_name);
                 if (auto net = net_ptr ? net_ptr->as_Net() : nullptr)
-                    net->destinations.push_back(node_entry);
+                    net->destinations().push_back(node_entry);
             }
         }
 
@@ -667,7 +699,7 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
             if (trim_nt && nb.parsed_args) {
                 while ((int)nb.parsed_args->size() > trim_nt->num_inputs) {
                     auto* an = std::get_if<ArgNet2>(&nb.parsed_args->back());
-                    if (!an || an->first != "$unconnected") break;
+                    if (!an || an->first() != "$unconnected") break;
                     nb.parsed_args->pop_back();
                 }
             }
@@ -721,10 +753,10 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
             if (!pa) return;
             for (auto& a : *pa) {
                 if (auto* an = std::get_if<ArgNet2>(&a)) {
-                    if (!an->second || !an->second->as_Net()) continue;
-                    auto actual = gb->find(an->first);
+                    if (!an->second() || !an->second()->as_Net()) continue;
+                    auto actual = gb->find(an->first());
                     if (actual && actual->as_Node())
-                        an->second = actual;
+                        an->entry(actual);
                 }
             }
         };
@@ -769,7 +801,7 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
             bool replaced = false;
             for (auto& a : *parent_ptr->parsed_args) {
                 if (auto* an = std::get_if<ArgNet2>(&a)) {
-                    if (an->first.compare(0, shadow_out_prefix.size(), shadow_out_prefix) == 0) {
+                    if (an->first().compare(0, shadow_out_prefix.size(), shadow_out_prefix) == 0) {
                         a = (*shadow_ptr->parsed_args)[0];
                         replaced = true;
                         break;
@@ -798,12 +830,12 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
                         parent_ptr->remaps[i] = ArgNet2{sin[i], net_ptr};
 
                         if (auto net = net_ptr->as_Net()) {
-                            auto& dests = net->destinations;
+                            auto& dests = net->destinations();
                             dests.erase(
                                 std::remove_if(dests.begin(), dests.end(),
                                     [&](auto& w) { return w.lock() == shadow_entry; }),
                                 dests.end());
-                            net->destinations.push_back(parent_ptr);
+                            net->destinations().push_back(parent_ptr);
                         }
                     }
                 }
@@ -819,7 +851,7 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
         for (auto& [net_id, net_entry] : gb->entries) {
             auto net_as = net_entry->as_Net();
             if (!net_as) continue;
-            auto src = net_as->source.lock();
+            auto src = net_as->source().lock();
             if (src == shadow_entry)
                 nets_to_remove.push_back(net_id);
         }
@@ -886,7 +918,7 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
         // Helper: rename ArgNet2 in-place
         auto remap_arg = [&](FlowArg2& a) {
             if (auto* an = std::get_if<ArgNet2>(&a))
-                an->first = remap_id(an->first);
+                an->id(remap_id(an->first()));
         };
         auto remap_args = [&](ParsedArgs2* pa) {
             if (!pa) return;
@@ -899,8 +931,8 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
             if (!node_p) continue;
             remap_args(node_p->parsed_args.get());
             remap_args(node_p->parsed_va_args.get());
-            for (auto& r : node_p->remaps) r.first = remap_id(r.first);
-            for (auto& o : node_p->outputs) o.first = remap_id(o.first);
+            for (auto& r : node_p->remaps) r.id(remap_id(r.first()));
+            for (auto& o : node_p->outputs) o.id(remap_id(o.first()));
         }
 
         // Rebuild entries map with new keys
