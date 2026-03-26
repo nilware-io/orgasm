@@ -508,9 +508,26 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
                 return {id, net_ptr};
             };
 
-            if (is_expr || !old_nt || !new_nt) {
-                // Expr nodes or unknown types: simple positional mapping
-                // inputs map directly as ArgNet2 entries prepended to parsed_args
+            if (is_expr) {
+                // Expr nodes: inputs map to $N remaps, not descriptor ports
+                // For expr!, inputs[0] is the bang trigger, rest are $N
+                int bang_offset = is_any_of(nb.type_id, NodeTypeID::ExprBang) ? 1 : 0;
+                for (int i = 0; i < (int)cur_inputs.size(); i++) {
+                    auto arg = resolve_net(cur_inputs[i]);
+                    if (i < bang_offset) {
+                        // Bang trigger → prepend to parsed_args
+                        if (!nb.parsed_args) nb.parsed_args = std::make_shared<ParsedArgs2>();
+                        nb.parsed_args->insert(nb.parsed_args->begin(), std::move(arg));
+                    } else {
+                        // $N remap
+                        int remap_idx = i - bang_offset;
+                        while ((int)nb.remaps.size() <= remap_idx)
+                            nb.remaps.push_back({"$unconnected", gb->find("$unconnected")});
+                        nb.remaps[remap_idx] = std::move(arg);
+                    }
+                }
+            } else if (!old_nt || !new_nt) {
+                // Unknown types: simple positional prepend
                 auto merged = std::make_shared<ParsedArgs2>();
                 for (auto& net_name : cur_inputs)
                     merged->push_back(resolve_net(net_name));
@@ -651,6 +668,13 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
             }
         }
 
+        // Ensure remaps are sized to rewrite_input_count (from $N refs in expressions)
+        if (nb.parsed_args && nb.parsed_args->rewrite_input_count > (int)nb.remaps.size()) {
+            auto unconnected = gb->find("$unconnected");
+            while ((int)nb.remaps.size() < nb.parsed_args->rewrite_input_count)
+                nb.remaps.push_back({"$unconnected", unconnected});
+        }
+
         cur_id.clear(); cur_type.clear(); cur_args.clear();
         cur_inputs.clear(); cur_outputs.clear();
         cur_x = 0; cur_y = 0; cur_shadow = false;
@@ -740,12 +764,26 @@ Deserializer::ParseAttoResult Deserializer::parse_atto(std::istream& f) {
         if (!shadow_ptr) continue;
         auto& shadow = std::get<FlowNodeBuilder>(*shadow_ptr);
 
-        // Insert shadow expression into parent's parsed_args at arg_index
-        if (parent.parsed_args) {
-            while ((int)parent.parsed_args->size() <= arg_index)
-                parent.parsed_args->push_back(ArgString2{""});
-            if (shadow.parsed_args && !shadow.parsed_args->empty())
+        // Insert shadow expression into parent's parsed_args
+        // Find the shadow's output net (e.g. "$auto-xxx_s0-out0") in parent's parsed_args and replace
+        if (parent.parsed_args && shadow.parsed_args && !shadow.parsed_args->empty()) {
+            std::string shadow_out_prefix = shadow_id + "-out";
+            bool replaced = false;
+            for (auto& a : *parent.parsed_args) {
+                if (auto* an = std::get_if<ArgNet2>(&a)) {
+                    if (an->first.compare(0, shadow_out_prefix.size(), shadow_out_prefix) == 0) {
+                        a = (*shadow.parsed_args)[0];
+                        replaced = true;
+                        break;
+                    }
+                }
+            }
+            // Fallback: try positional insertion (for nodes without merged inputs)
+            if (!replaced) {
+                while ((int)parent.parsed_args->size() <= arg_index)
+                    parent.parsed_args->push_back(ArgString2{""});
                 (*parent.parsed_args)[arg_index] = (*shadow.parsed_args)[0];
+            }
         }
 
         // Build remaps from saved shadow input nets

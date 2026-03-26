@@ -69,8 +69,10 @@ static NodeLayout compute_node_layout(const FlowNodeBuilder& node, ImVec2 canvas
         for (auto& a : *pa) if (std::holds_alternative<ArgNet2>(a)) n++;
         return n;
     };
+    bool has_va = nt && nt->va_args != nullptr;
     int num_in = count_net_args(node.parsed_args.get())
                + count_net_args(node.parsed_va_args.get())
+               + (has_va ? 1 : 0)  // +1 for the "add more" diamond
                + (int)node.remaps.size();
     int num_out = nt ? nt->num_outputs : 1;
     if (node.type_id == NodeTypeID::Expr || node.type_id == NodeTypeID::ExprBang) {
@@ -274,7 +276,11 @@ void Editor2Pane::draw() {
         pin += draw_wires_from_args(dst_node.parsed_args.get(), pin);
         pin += draw_wires_from_args(dst_node.parsed_va_args.get(), pin);
 
-        // Remaps: $N pins (appended after base + va_args)
+        // Skip +diamond slot if node has va_args
+        auto* dst_nt2 = find_node_type2(dst_node.type_id);
+        if (dst_nt2 && dst_nt2->va_args) pin++;
+
+        // Remaps: $N pins (appended after base + va_args + add-diamond)
         for (int i = 0; i < (int)dst_node.remaps.size(); i++) {
             auto& remap = dst_node.remaps[i];
             draw_wire_to_pin(pin + i, remap.second, remap.first);
@@ -345,6 +351,7 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
     // Draw input pins (top)
     // Pin order: parsed_args ArgNet2 (inputs merged first), then va_args ArgNet2, then remaps
     float pr = PIN_RADIUS * canvas_zoom_;
+    bool has_va = nt->va_args != nullptr;
     auto count_net_args_in = [](const ParsedArgs2* pa) -> int {
         if (!pa) return 0;
         int n = 0;
@@ -353,21 +360,53 @@ void Editor2Pane::draw_node(ImDrawList* dl, const NodeId& id, const FlowNodeBuil
     };
     int base_pin_count = count_net_args_in(node.parsed_args.get());
     int va_pin_count = count_net_args_in(node.parsed_va_args.get());
+    int add_pin_pos = base_pin_count + va_pin_count; // where the +diamond goes (if va_args)
     for (int i = 0; i < layout.num_in; i++) {
         ImVec2 pp = layout.input_pin_pos(i);
+
+        // Draw the "add more" diamond at the boundary between va_args and remaps
+        if (has_va && i == add_pin_pos) {
+            ImU32 pc = IM_COL32(120, 120, 140, 180);
+            dl->AddQuadFilled({pp.x, pp.y - pr}, {pp.x + pr, pp.y}, {pp.x, pp.y + pr}, {pp.x - pr, pp.y}, pc);
+            float cr = pr * 0.5f;
+            ImU32 tc = IM_COL32(200, 200, 220, 220);
+            float lth = 1.5f * canvas_zoom_;
+            dl->AddLine({pp.x - cr, pp.y}, {pp.x + cr, pp.y}, tc, lth);
+            dl->AddLine({pp.x, pp.y - cr}, {pp.x, pp.y + cr}, tc, lth);
+            continue;
+        }
+
         PortKind2 kind = PortKind2::Data;
+        bool is_va = false;
+        bool is_optional = false;
         if (i < base_pin_count && nt->input_ports && i < nt->num_inputs) {
             kind = nt->input_ports[i].kind;
-        } else if (i >= base_pin_count && i < base_pin_count + va_pin_count) {
+            is_optional = nt->input_ports[i].optional;
+        } else if (i >= base_pin_count && i < add_pin_pos) {
             kind = nt->va_args ? nt->va_args->kind : PortKind2::Data;
+            is_va = true;
         }
+        // pins after add_pin_pos are remaps (Data)
 
         ImU32 pc = pin_color(kind);
         if (kind == PortKind2::BangTrigger) {
             dl->AddRectFilled({pp.x - pr, pp.y - pr}, {pp.x + pr, pp.y + pr}, pc);
         } else if (kind == PortKind2::Lambda) {
-            // Down-pointing triangle for lambda inputs (matching editor1)
             dl->AddTriangleFilled({pp.x - pr, pp.y - pr}, {pp.x + pr, pp.y - pr}, {pp.x, pp.y + pr}, pc);
+        } else if (is_va) {
+            // Diamond for va_args pins
+            dl->AddQuadFilled({pp.x, pp.y - pr}, {pp.x + pr, pp.y}, {pp.x, pp.y + pr}, {pp.x - pr, pp.y}, pc);
+        } else if (is_optional) {
+            // Diamond with ? for optional pins
+            dl->AddQuadFilled({pp.x, pp.y - pr}, {pp.x + pr, pp.y}, {pp.x, pp.y + pr}, {pp.x - pr, pp.y}, pc);
+            float font_sz = pr * 1.6f;
+            if (font_sz > 3.0f) {
+                ImVec2 ts = ImGui::CalcTextSize("?");
+                float scale = font_sz / ImGui::GetFontSize();
+                dl->AddText(nullptr, font_sz,
+                    {pp.x - ts.x * scale * 0.5f, pp.y - ts.y * scale * 0.5f},
+                    IM_COL32(30, 30, 40, 255), "?");
+            }
         } else {
             dl->AddCircleFilled(pp, pr, pc);
         }
