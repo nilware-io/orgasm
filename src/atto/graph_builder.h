@@ -246,8 +246,6 @@ private:
     std::vector<BuilderEntryWeak> destinations_;
 };
 
-using NetBuilderPtr = std::shared_ptr<NetBuilder>;
-
 // ─── FlowNodeBuilder ───
 
 using Remaps = std::vector<FlowArg2Ptr>;
@@ -268,8 +266,6 @@ struct FlowNodeBuilder: BuilderEntry {
 
     std::string args_str() const;
 };
-
-using FlowNodeBuilderPtr = std::shared_ptr<FlowNodeBuilder>;
 
 using BuilderResult = std::variant<std::pair<NodeId, FlowNodeBuilder>, BuilderError>;
 
