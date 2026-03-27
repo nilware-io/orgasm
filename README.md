@@ -6,6 +6,7 @@ Each instrument is a self-contained `.atto` program that defines its Functionali
 
 <img width="3840" height="2088" alt="nanolang" src="https://github.com/nilware-io/orgasm/blob/main/docs/nanolang.png" />
 
+Listen to the [introductory podcast](docs/podcasts/introducing-orgasm.md) — *Growing Instruments with the Organic Assembler* ([SoundCloud](https://soundcloud.com/poiitidis/growing-instruments-with-the), [YouTube](https://youtu.be/ymzuD-oekFM)).
 
 See an [example instrument](scenes/klavier/main.atto) and the full [language specification](docs/attolang.md).
 
@@ -52,6 +53,12 @@ git clone https://github.com/microsoft/vcpkg.git
 cmake -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
 cmake --build build --parallel --config Release
 ```
+
+## Instructions
+
+New to the project? Start with the [Instructions](docs/instructions.md) — a guide to interpreting and following instructions, operating on the codebase, and building instruments with the Organic Assembler. It covers everything from the build system and architectural layers to the anatomy of an instrument and the audio callback pattern.
+
+For naming philosophy, see [Names](docs/names.md). For the full documentation suite: [Architecture](docs/architecture.md), [Language Spec](docs/attolang.md), [Patterns](docs/patterns.md), [Thinking](docs/thinking.md), [Style](docs/style.md), [Coding](docs/coding.md), [Changelog](docs/changelog.md).
 
 ## License
 

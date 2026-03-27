@@ -457,27 +457,31 @@ Nodes with input or output bangs:
 
 ## Inline Expressions
 
-All non-declaration nodes support **inline expressions** in their arguments. Each space-separated arg token replaces the corresponding descriptor input. If an arg is an inline expression (a literal, symbol, or complex expression), that input slot is "filled" and does not require a pin connection. Only `$N` references within inline expressions create actual input pins.
+All non-declaration nodes support **inline expressions** in their arguments. Each arg maps 1:1 to a descriptor input port. An arg can be:
+
+- **Net reference** (`$net-name`): connects to a named net — produces a visible input pin
+- **Expression** (`sin($0)+1`): inline expression — displayed in node text, no pin
+- **Literal** (`42`, `"hello"`, `true`): inline constant — displayed in node text, no pin
+- **Symbol** (`oscs`, `sin`): bare identifier resolved via symbol table — displayed in text, no pin
+
+Only net references produce visible input pins. All other arg types fill the slot inline.
 
 ### Rules
 
-1. Each arg token (space-separated, respecting parentheses and quotes) maps to a descriptor input left-to-right
-2. The number of arg tokens must not exceed the node's descriptor input count (error otherwise)
-3. `$N` references within inline args create input pins; symbol references (bare names) do not
-4. Pin indices must be contiguous starting from 0 — gaps (e.g. `$0` and `$2` without `$1`) are errors
-5. Descriptor inputs beyond the number of inline args remain as pin connections
+1. Each arg maps to a descriptor input left-to-right
+2. The number of args must not exceed the node's descriptor input count (plus va-args if applicable)
+3. `$N` references within expressions create **remap pins** (mapped via the `remaps` array)
+4. Remap indices must be contiguous starting from 0 — gaps produce errors
+5. `$name` (non-numeric, starting with `$`) references a named net and produces a visible pin
+6. Bare names (no `$` prefix) are symbols resolved via the symbol table, not pins
 
-### Examples (store! has 2 descriptor inputs: target, value)
+### Examples (store! has 3 descriptor inputs: bang_in, target, value)
 
-| Node text | Pins | Explanation |
-|-----------|------|-------------|
-| `store!` | target, value | No inline args — both inputs are pins |
-| `store! oscs` | value | target filled by symbol `oscs` (resolves via symbol table to `&T`) |
-| `store! oscs 42` | (none) | Both filled inline |
-| `store! oscs $0` | $0 | target = symbol, value = pin $0 |
-| `store! $1 $0` | $0, $1 | Both inline but reference pins |
-| `store! $0 $1 $2` | error | Too many args (store! takes 2) |
-| `store! $0 $2` | error | Missing pin $1 |
+| Args | Visible pins | Explanation |
+|------|-------------|-------------|
+| `["$bang-src", "$var-ref", "$val-net"]` | 3 pins | All net refs — all visible |
+| `["$bang-src", "oscs", "$0"]` | 2 pins (bang + remap $0) | target filled by symbol `oscs` |
+| `["$bang-src", "oscs", "42"]` | 1 pin (bang only) | Both target and value filled inline |
 
 ## Expression Language
 
@@ -627,8 +631,7 @@ When a lambda's data dependency traces back to a node in the caller scope, that 
 Bang pins represent `() -> void` callable connections for control flow:
 
 - **BangTrigger** (top square): The node's callable entry point. When invoked, the node executes. Typed as `() -> void`. Can be used as a value source — connecting a BangTrigger to a data Input passes the `() -> void` callable as a value (e.g., to store it in a variable).
-- **BangNext** (bottom square): The node's continuation. After execution, the node calls whatever is connected here. Typed as `() -> void`. Links go FROM BangNext TO BangTrigger.
-- **Post-bang** (side): Fires after the node's inline expressions are evaluated. Same semantics as BangNext.
+- **BangNext** (bottom square): The node's continuation output. After execution, the node calls whatever is connected here. Typed as `() -> void`. Links go FROM BangNext TO BangTrigger. The first output pin on bang nodes is always a `BangNext` named `next` — this replaces the old `post_bang` pseudo-pin and is rendered at the same visual position.
 
 **Link direction:** BangNext → BangTrigger. The "next" pin calls the "trigger" pin.
 
@@ -636,44 +639,205 @@ Bang pins represent `() -> void` callable connections for control flow:
 
 **Bidirectional BangTrigger:** A BangTrigger pin can be both a link destination (receiving bang chain flow from BangNext) and a link source (providing its `() -> void` value to a data Input pin).
 
-## File Format (.atto)
+## File Format (instrument@atto:0)
 
-TOML-like format:
+TOML-like format with named nets instead of explicit pin-to-pin connections.
 
 ```
-version = "attoprog@0"
-
-[viewport]
-x = -500.0
-y = -200.0
-zoom = 1.5
+# version instrument@atto:0
 
 [[node]]
-guid = "a3f7c1b2e9d04856"
+id = "$gen-expr"
 type = "expr"
-args = ["$0+$1"]
-position = [100, 200]
-connections = ["a3f7c1b2e9d04856.out0->b4c8d9e0f1a23456.0"]
+args = ["sin($0.p)*$1/32.f"]
+remaps = ["$iter-item", "$iter-amp"]
+position = [1866.25, 1443.11]
+
+[[node]]
+id = "$store-p"
+type = "store!"
+args = ["$0.p"]
+remaps = ["$iter-item"]
+position = [2133.84, 1421.55]
 ```
 
-### Viewport Section
+### Version Header
 
-The optional `[viewport]` section stores the editor's camera state. It must appear after `version` and before any `[[node]]` entries.
+First line: `# version instrument@atto:0` (comment-style).
 
-| Field  | Type  | Description                    |
-|--------|-------|--------------------------------|
-| `x`    | float | Horizontal scroll offset       |
-| `y`    | float | Vertical scroll offset         |
-| `zoom` | float | Zoom level (1.0 = default)     |
+Legacy formats (`nanoprog@0`, `nanoprog@1`, `attoprog@0`, `attoprog@1`) are loaded via a legacy parser and auto-migrated. Saving always writes `instrument@atto:0`.
 
-### Connection Format
+### Node IDs and Net Names
 
-Connections use pin IDs: `"<guid>.<pin_name>-><guid>.<pin_name>"`
+Node IDs and net names share the same namespace:
+- Format: `$[a-zA-Z_-][a-zA-Z0-9_-]*`
+- Auto-generated on import: `$a-0`, `$a-1`, ... `$a-f`, `$a-10`, ... (compact hex, migrated from old `$auto-<guid>`)
+- `$0`, `$1`, ... `$N` are reserved for expression pin inputs (remaps)
+- `$unconnected` is a reserved sentinel net for unconnected pins
+- `$empty` is a reserved sentinel node for unassigned pin ownership
+- The `$` prefix is stored in the file
 
-Pin names:
-- Data/lambda inputs: `0`, `1`, `2`, ... or named (e.g. `gen`, `stop`)
-- Bang inputs: `bang_in0`, `bang_in1`, ...
-- Data outputs: `out0`, `out1`, ...
-- Bang outputs: `bang0`, `bang1`, ...
-- Lambda grab: `as_lambda`
-- Post-bang: `post_bang`
+### Sentinel Entries
+
+| Sentinel | Type | Purpose |
+|---|---|---|
+| `$unconnected` | Net | Default wire for unconnected pins |
+| `$empty` | Node | Default node owner for pins not yet assigned to a node |
+
+Both are pre-registered by `GraphBuilder::ensure_sentinels()`. Direct `find()` or `find_or_create_net()` calls with these names throw — use `gb->unconnected_net()` / `gb->empty_node()` instead.
+
+### Node Structure
+
+```toml
+[[node]]
+id = "$a-5"              # compact hex identifier
+type = "store!"          # node type name
+args = ["oscs", "$0"]    # inline arguments (expressions, literals, net refs)
+remaps = ["$a-3-out0"]   # $N → net mapping for expression pin inputs
+position = [100, 200]    # canvas coordinates
+```
+
+### Node Kinds
+
+| Kind | Bang input | Bang output | Side-bang | Description |
+|---|---|---|---|---|
+| `Flow` | No | Yes (side-bang, right) | Yes | Dataflow node — all flow nodes have a side-bang |
+| `Banged` | Yes (top) | Yes (bottom) | No | Imperative node with bang trigger |
+| `Event` | No | Yes (bottom) | No | Event source |
+| `Declaration` | Yes (top) | Yes (bottom) | No | Compile-time declaration |
+| `Special` | No | No | No | Label or Error |
+
+Flow nodes always have `outputs[0]` as the side-bang (BangNext). It is rendered on the right side, not at the bottom.
+
+### Arguments (`args`)
+
+Each entry in the `args` array is a singular expression (space-delimited in the source, already split in the file). Arguments map 1:1 to the node's descriptor input ports.
+
+An argument can be:
+- **Net reference** (`$name`): connects to a named net — produces a visible input pin
+- **Expression** (`sin($0)+1`): inline expression with `$N` pin refs — displayed in node text, not a pin
+- **Number** (`42`, `3.14f`): inline constant — displayed in node text
+- **String** (`"hello"`): inline string literal — displayed in node text
+
+Only net reference entries produce visible input pins. Inline values are displayed in the node's label text.
+
+### Remaps (`remaps`)
+
+The `remaps` array maps `$N` expression pin inputs to named nets:
+
+```toml
+remaps = ["$a-2-out0", "$a-2-out1"]
+```
+
+- `remaps[0]` = net for `$0`, `remaps[1]` = net for `$1`, etc.
+- `$unconnected` for unconnected expression inputs
+- Remaps are always net references
+
+### Pin Model
+
+Pins are graph entities (`FlowArg2` hierarchy: `ArgNet2`, `ArgNumber2`, `ArgString2`, `ArgExpr2`). Each pin has:
+- **`node()`** — owning FlowNodeBuilder (always valid, `$empty` if unassigned)
+- **`wire()`** / **`net()`** — associated NetBuilder (always valid, `$unconnected` if unassigned)
+- **`port()`** — PortDesc2 descriptor (null for remaps)
+- **`name()`** — computed: `"port_name"` or `"va_name[idx]"` or `"remaps[idx]"`
+- **`is_remap()`** — true if port is null (remap pin)
+
+#### Input pins (top of node, left to right)
+
+Only net reference (`$name`) arguments produce visible pins. The visible pin count is:
+
+| Section | Visible pins | Source |
+|---|---|---|
+| **Base args** | Only net refs in `args` | 1:1 with descriptor input ports |
+| **Input va-args** | Only net refs in va-args | Named `va_name[0]`, `va_name[1]`, ... |
+| **+diamond** | Add button (if node has input va-args) | Rendered as ◇ with + |
+| **Remaps** | All entries | `$0`, `$1`, ... from expressions |
+
+#### Output pins (bottom of node)
+
+Fixed descriptor output ports are rendered at the bottom, EXCEPT for flow nodes where `outputs[0]` (side-bang) is rendered on the right side. Output va-args follow fixed outputs.
+
+| Section | Pins | Source |
+|---|---|---|
+| **Fixed outputs** | Descriptor output ports (skip side-bang for flow) | `outputs[skip_sb..]` |
+| **Output va-args** | Dynamic outputs | `outputs_va_args[]` |
+
+Expr/expr! have output va-args sized to match expression count. Event! has output va-args for spillover outputs.
+
+#### Pin kinds
+
+| Kind | Visual | Description |
+|---|---|---|
+| `BangTrigger` | Square (top) | Trigger input |
+| `Data` | Circle | Data value |
+| `Lambda` | Down-pointing triangle | Lambda capture (accepts node refs) |
+| `BangNext` | Square (bottom/right) | Bang continuation output |
+| `Va-args` | Diamond (◇) | Variable-length input/output |
+| `Optional` | Diamond with ? | Optional input (trailing) |
+
+#### Special pins
+
+| Pin | Position | Visual | Description |
+|---|---|---|---|
+| **Lambda grab** | Left center | Left-pointing triangle (purple) | Capture this node as lambda |
+| **Side-bang** | Right center | Square (yellow) | Post-bang output (flow nodes only) |
+
+### Lambda Captures via Node ID
+
+When a `$id` in an argument resolves to a **node** (not a net), it is a lambda capture. The wire renders from the source node's lambda grab (left side) to the destination's lambda pin.
+
+- Node reference → lambda capture (wire from grab)
+- Net reference → data wire (wire from output pin)
+- `Lambda` pins accept only node refs
+- `Data` pins can accept either
+
+### Input Va-args
+
+Some node types accept a variable number of additional inputs. The va-args template is defined on `NodeType2::input_ports_va_args`.
+
+| Node | Va-args template | Description |
+|---|---|---|
+| `new` | `field` | Constructor fields (`field[0]`, `field[1]`, ...) |
+| `call` / `call!` | `arg` | Function arguments (`arg[0]`, `arg[1]`, ...) |
+| `lock` / `lock!` | `param` | Lambda parameters (`param[0]`, `param[1]`, ...) |
+
+### Output Va-args
+
+Some node types have dynamic output counts. The template is defined on `NodeType2::output_ports_va_args`.
+
+| Node | Va-args template | Description |
+|---|---|---|
+| `expr` | `expr` | One output per expression (`expr[0]`, `expr[1]`, ...) |
+| `expr!` | `expr` | Same, after the fixed `next` output |
+| `event!` | `args` | Event argument outputs |
+
+### Optional Ports
+
+Optional ports are always trailing in the descriptor. They are split into separate `input_optional_ports` / `num_inputs_optional` on NodeType2. If not connected, they are omitted from `parsed_args` (shorter array). The editor shows absent optionals as ◇ with ? inside.
+
+Currently only `decl_var` has an optional port (`initial`).
+
+### Viewport (Meta File)
+
+Viewport state is stored in `.atto/<filename>.yaml`, not in the `.atto` file:
+
+```yaml
+# Editor metadata for main.atto
+viewport_x: -1504.32
+viewport_y: -551.573
+viewport_zoom: 4.17725
+```
+
+The `.atto/` directory is gitignored. Node positions remain in the `.atto` file.
+
+### Labels and Errors
+
+```toml
+[[node]]
+id = "$lbl-types"
+type = "label"
+args = ["Types"]
+position = [766, 335]
+```
+
+Labels have exactly 1 argument (the display text). Error nodes are the same — they display the original args when parsing failed.
