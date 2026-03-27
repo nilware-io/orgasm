@@ -112,14 +112,6 @@ VisualPinMap VisualPinMap::build(const FlowNodeBuilderPtr& node, const NodeType2
             }
         }
     }
-    // Absent trailing optional ports
-    for (int i = parsed_size; i < nt->total_inputs(); i++) {
-        if (i >= nt->num_inputs) {
-            const PortDesc2* pd = nt->input_port(i);
-            PortKind2 pk = pd ? pd->kind : PortKind2::Data;
-            vpm.inputs.push_back({VisualPinKind::AbsentOptional, nullptr, pd, pk, true});
-        }
-    }
     // Va_args
     if (node->parsed_va_args) {
         PortKind2 va_kind = nt->input_ports_va_args ? nt->input_ports_va_args->kind : PortKind2::Data;
@@ -278,9 +270,18 @@ void render_node(ImDrawList* dl, const FlowNodeBuilderPtr& node, const NodeType2
         }
 
         ImU32 pc = pin_color(pin.port_kind);
-        if (pin.kind == VisualPinKind::AbsentOptional || (pin.is_optional && pin.kind == VisualPinKind::Base)) {
+        if (pin.is_optional && pin.kind == VisualPinKind::Base) {
             dl->AddQuadFilled({pp.x, pp.y - pr}, {pp.x + pr, pp.y}, {pp.x, pp.y + pr}, {pp.x - pr, pp.y}, pc);
-            if (pin.kind == VisualPinKind::AbsentOptional) {
+            // Show "?" if unconnected optional
+            bool is_unconnected = false;
+            if (pin.arg) {
+                auto an = pin.arg->as_net();
+                if (an) {
+                    auto net = an->second() ? an->second()->as_net() : nullptr;
+                    is_unconnected = net && net->is_the_unconnected();
+                }
+            }
+            if (is_unconnected) {
                 float font_sz = pr * 1.6f;
                 if (font_sz > 3.0f) {
                     ImVec2 ts = ImGui::CalcTextSize("?");
@@ -353,7 +354,7 @@ void render_node(ImDrawList* dl, const FlowNodeBuilderPtr& node, const NodeType2
 
     auto pin_shape_for = [](const VisualPin& pin) -> PinShape {
         if (pin.kind == VisualPinKind::VaArg || pin.kind == VisualPinKind::AddDiamond) return PinShape::Diamond;
-        if (pin.is_optional || pin.kind == VisualPinKind::AbsentOptional) return PinShape::Diamond;
+        if (pin.is_optional) return PinShape::Diamond;
         if (pin.port_kind == PortKind2::BangTrigger || pin.port_kind == PortKind2::BangNext) return PinShape::Square;
         if (pin.port_kind == PortKind2::Lambda) return PinShape::TriangleDown;
         return PinShape::Circle;
@@ -375,7 +376,7 @@ void render_node(ImDrawList* dl, const FlowNodeBuilderPtr& node, const NodeType2
         // Input pins
         for (int i = 0; i < (int)vpm.inputs.size(); i++) {
             auto& pin = vpm.inputs[i];
-            if (pin.kind == VisualPinKind::AddDiamond || pin.kind == VisualPinKind::AbsentOptional) continue;
+            if (pin.kind == VisualPinKind::AddDiamond) continue;
             if (pin.arg == state.hovered_pin) {
                 draw_highlight(layout.input_pin_pos(i), pin_shape_for(pin));
                 if (draw_tooltips)
@@ -528,7 +529,6 @@ HitResult hit_test_pins(ImVec2 mouse, const std::vector<NodeHitTarget>& nodes, f
         // Input pins
         for (int i = 0; i < (int)vpm.inputs.size(); i++) {
             auto& pin = vpm.inputs[i];
-            if (pin.kind == VisualPinKind::AbsentOptional) continue;
             float pd = dist2d(mouse, layout.input_pin_pos(i));
             if (pin.kind == VisualPinKind::AddDiamond) {
                 if (pd < pin_thresh && vpm.add_diamond_va_port) {

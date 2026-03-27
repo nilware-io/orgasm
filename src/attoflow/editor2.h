@@ -106,6 +106,7 @@ protected:
                           const FlowArg2Ptr& to_pin, PortPosition2 to_pos) override;
     bool do_disconnect_pin(const FlowArg2Ptr& pin, PortPosition2 pos) override;
     void do_reconnect_pin(const FlowArg2Ptr& pin, PortPosition2 pos) override;
+    void do_delete_hovered(const HoverItem& item) override;
 
 private:
     friend struct NodeEditorImpl;

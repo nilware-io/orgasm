@@ -108,7 +108,7 @@ void Editor2Pane::rebuild_wires(ImVec2 canvas_origin) {
 
         for (int i = 0; i < (int)dst_vpm.inputs.size(); i++) {
             auto& pin = dst_vpm.inputs[i];
-            if (pin.kind == VisualPinKind::AddDiamond || pin.kind == VisualPinKind::AbsentOptional) continue;
+            if (pin.kind == VisualPinKind::AddDiamond) continue;
             if (!pin.arg) continue;
             auto an = pin.arg->as_net();
             if (!an) continue;
@@ -350,6 +350,8 @@ bool Editor2Pane::pin_is_connected(const FlowArg2Ptr& pin) {
     if (!an) return false;
     auto entry = an->second();
     if (!entry) return false;
+    // Connected if entry is a node (lambda) or a non-unconnected net
+    if (entry->as_node()) return true;
     auto net = entry->as_net();
     return net && !net->is_the_unconnected();
 }
@@ -493,5 +495,110 @@ void Editor2Pane::do_reconnect_pin(const FlowArg2Ptr& pin, PortPosition2 pos) {
 
     gb_->edit_commit();
     grab_undo_ = {};
+    wires_dirty_ = true;
+}
+
+void Editor2Pane::do_delete_hovered(const HoverItem& item) {
+    if (!gb_) return;
+
+    gb_->edit_start();
+
+    if (auto* pin_ptr = std::get_if<FlowArg2Ptr>(&item)) {
+        // Pin hovered: disconnect it from its net
+        auto& pin = *pin_ptr;
+        if (pin) {
+            auto an = pin->as_net();
+            if (an) {
+                auto entry = an->second();
+                auto net = entry ? entry->as_net() : nullptr;
+                if (net && !net->is_the_unconnected()) {
+                    // Remove this node from the net's destinations
+                    auto node = pin->node();
+                    auto& dests = net->destinations();
+                    dests.erase(std::remove_if(dests.begin(), dests.end(),
+                        [&](auto& w) { return w.lock() == node; }), dests.end());
+
+                    // Point pin to $unconnected
+                    auto unconnected = gb_->unconnected_net();
+                    an->net_id(unconnected->id());
+                    an->entry(std::static_pointer_cast<BuilderEntry>(unconnected));
+                }
+            }
+        }
+    } else if (auto* entry_ptr = std::get_if<BuilderEntryPtr>(&item)) {
+        auto& entry = *entry_ptr;
+        if (!entry) { gb_->edit_commit(); return; }
+
+        if (auto net = entry->as_net()) {
+            // Net hovered: disconnect all pins from this net
+            auto unconnected = gb_->unconnected_net();
+            auto uncon_entry = std::static_pointer_cast<BuilderEntry>(unconnected);
+            // Disconnect all args referencing this net
+            for (auto& p : gb_->pins()) {
+                auto an = p->as_net();
+                if (an && an->second() == entry) {
+                    an->net_id(unconnected->id());
+                    an->entry(uncon_entry);
+                }
+            }
+            net->destinations().clear();
+            net->source(BuilderEntryWeak{});
+            gb_->entries.erase(net->id());
+        } else if (auto node = entry->as_node()) {
+            // Node hovered: disconnect all its pins, then remove the node
+            auto unconnected = gb_->unconnected_net();
+            auto uncon_entry = std::static_pointer_cast<BuilderEntry>(unconnected);
+
+            // Disconnect all input args
+            auto disconnect_args = [&](ParsedArgs2* pa) {
+                if (!pa) return;
+                for (int i = 0; i < pa->size(); i++) {
+                    auto an = (*pa)[i]->as_net();
+                    if (!an) continue;
+                    auto net_e = an->second() ? an->second()->as_net() : nullptr;
+                    if (net_e && !net_e->is_the_unconnected()) {
+                        auto& dests = net_e->destinations();
+                        dests.erase(std::remove_if(dests.begin(), dests.end(),
+                            [&](auto& w) { return w.lock() == node; }), dests.end());
+                    }
+                    an->net_id(unconnected->id());
+                    an->entry(uncon_entry);
+                }
+            };
+            disconnect_args(node->parsed_args.get());
+            disconnect_args(node->parsed_va_args.get());
+            for (auto& r : node->remaps) {
+                auto an = r->as_net();
+                if (an) { an->net_id(unconnected->id()); an->entry(uncon_entry); }
+            }
+            // Disconnect output args and clear net sources
+            for (auto& o : node->outputs) {
+                auto an = o->as_net();
+                if (!an) continue;
+                auto net_e = an->second() ? an->second()->as_net() : nullptr;
+                if (net_e && !net_e->is_the_unconnected())
+                    net_e->source(BuilderEntryWeak{});
+                an->net_id(unconnected->id());
+                an->entry(uncon_entry);
+            }
+            for (auto& o : node->outputs_va_args) {
+                auto an = o->as_net();
+                if (!an) continue;
+                auto net_e = an->second() ? an->second()->as_net() : nullptr;
+                if (net_e && !net_e->is_the_unconnected())
+                    net_e->source(BuilderEntryWeak{});
+                an->net_id(unconnected->id());
+                an->entry(uncon_entry);
+            }
+
+            // Remove from selection
+            if (shared_) shared_->selected_nodes.erase(node);
+
+            // Remove node from entries
+            gb_->entries.erase(node->id());
+        }
+    }
+
+    gb_->edit_commit();
     wires_dirty_ = true;
 }

@@ -113,11 +113,13 @@ void VisualEditor::draw_canvas(const char* id) {
     }
 
     // ─── Right-click: wire grab/move from connected pin, OR pan ───
+    bool wire_grab_just_started = false;
     if (canvas_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
         if (hover_pin && pin_is_connected(hover_pin) && !wire_grab_active_) {
             // Right-click on connected pin → grab and move the wire
             auto pos = get_pin_position(hover_pin);
             wire_grab_active_ = true;
+            wire_grab_just_started = true;
             wire_grab_pin_ = hover_pin;
             wire_grab_pin_pos_ = pos;
             wire_grab_anchor_ = get_pin_screen_pos(hover_pin);
@@ -125,18 +127,24 @@ void VisualEditor::draw_canvas(const char* id) {
         }
     }
 
-    // Right-click release
-    if (wire_grab_active_ && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
-        bool connected = false;
-        if (hover_pin && hover_pin != wire_grab_pin_) {
-            auto to_pos = get_pin_position(hover_pin);
-            if (can_connect_pins(wire_grab_pin_, wire_grab_pin_pos_, hover_pin, to_pos))
-                connected = do_connect_pins(wire_grab_pin_, wire_grab_pin_pos_, hover_pin, to_pos);
+    // Right-click release (skip if grab just started this frame)
+    if (!wire_grab_just_started && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+        if (wire_grab_active_) {
+            bool connected = false;
+            if (hover_pin && hover_pin != wire_grab_pin_) {
+                auto to_pos = get_pin_position(hover_pin);
+                if (can_connect_pins(wire_grab_pin_, wire_grab_pin_pos_, hover_pin, to_pos))
+                    connected = do_connect_pins(wire_grab_pin_, wire_grab_pin_pos_, hover_pin, to_pos);
+            }
+            if (!connected)
+                do_reconnect_pin(wire_grab_pin_, wire_grab_pin_pos_);
+            wire_grab_active_ = false;
+            wire_grab_pin_ = nullptr;
+        } else if (canvas_hovered && ImGui::GetIO().KeyCtrl &&
+                   !std::holds_alternative<std::monostate>(hover_item_)) {
+            // Ctrl+right-click release: delete hovered item
+            do_delete_hovered(hover_item_);
         }
-        if (!connected)
-            do_reconnect_pin(wire_grab_pin_, wire_grab_pin_pos_);
-        wire_grab_active_ = false;
-        wire_grab_pin_ = nullptr;
     }
 
     // Right-click drag: pan (only if not wire-grabbing)

@@ -90,4 +90,7 @@ protected:
 
     // Reconnect a previously disconnected pin (undo grab). Called on cancel.
     virtual void do_reconnect_pin(const FlowArg2Ptr& pin, PortPosition2 pos) {}
+
+    // Delete a node, net, or pin's connection. Called on ctrl+right-click release.
+    virtual void do_delete_hovered(const HoverItem& item) {}
 };
