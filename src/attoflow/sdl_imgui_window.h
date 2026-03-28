@@ -92,9 +92,9 @@ struct SdlImGuiWindow {
                 }
             }
             io.FontGlobalScale = 1.0f / dpi_scale;
-            ImGui_ImplSDLRenderer3_DestroyFontsTexture();
+            ImGui_ImplSDLRenderer3_DestroyDeviceObjects();
             io.Fonts->Build();
-            ImGui_ImplSDLRenderer3_CreateFontsTexture();
+            ImGui_ImplSDLRenderer3_CreateDeviceObjects();
         }
     }
 
